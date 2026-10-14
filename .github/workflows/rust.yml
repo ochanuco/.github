@@ -1,0 +1,67 @@
+name: rust
+
+# Rust の repo の check。既定は fmt・clippy・test。wasm などの repo 固有の手順は run で足す
+on:
+  workflow_call:
+    inputs:
+      run:
+        description: ツールチェーンを用意した後に実行するコマンド
+        type: string
+        default: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      toolchain:
+        type: string
+        default: stable
+      targets:
+        description: '追加のターゲット（例: wasm32-unknown-unknown）。カンマ区切り'
+        type: string
+        default: ""
+      tools:
+        description: 'taiki-e/install-action で入れるツール（例: wasm-pack,wasm-bindgen-cli@0.2.127）。カンマ区切り'
+        type: string
+        default: ""
+      setup-node:
+        description: 'run の中で node を使うなら、その版（例: "24"）'
+        type: string
+        default: ""
+      runs-on:
+        type: string
+        default: ubuntu-latest
+      timeout-minutes:
+        type: number
+        default: 20
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: ${{ inputs.toolchain }}
+          targets: ${{ inputs.targets }}
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - if: inputs.tools != ''
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: ${{ inputs.tools }}
+
+      - if: inputs.setup-node != ''
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ inputs.setup-node }}
+
+      - name: Run
+        run: ${{ inputs.run }}

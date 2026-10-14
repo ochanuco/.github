@@ -10,6 +10,9 @@ ochanuco の repo で共有するもの。repo の設定と ruleset は [chabata
 |---|---|
 | `pnpm.yml` | Node.js + pnpm の check。依存を入れてから `run` を実行する |
 | `uv.yml` | Python + uv の check。`run` に依存の入れ方から書く |
+| `rust.yml` | Rust の check。既定は fmt・clippy・test。追加のターゲットやツール（wasm-pack など）は入力で受ける |
+| `go.yml` | Go の check。既定は build・vet・test。版は go.mod から読む |
+| `dotnet.yml` | .NET の check。restore から test までを `run` で渡す |
 | `release-pr.yml` | `main` → `production` のリリース PR を作る・更新する |
 
 呼び出し側は commit SHA で固定する（`@<sha> # <短い説明>`）。更新は Renovate の PR で受ける。
@@ -40,7 +43,9 @@ jobs:
     uses: ochanuco/.github/.github/workflows/pnpm.yml@<sha>
 ```
 
-`run` を渡さなければ `pnpm run typecheck` と `pnpm test` を実行する。uv の repo は `uv.yml` を使い、`run` を必ず渡す。
+`run` を渡さなければ `pnpm run typecheck` と `pnpm test` を実行する。pnpm の版は `package.json` の `packageManager` から読むので、repo 側に必ず書く。uv の repo は `uv.yml` を使い、`run` を必ず渡す。どの workflow も `runs-on`（既定は ubuntu-latest）を受け、pnpm・uv・go は `working-directory` も受ける。
+
+CI の最低限は「ビルドか型チェックが通る」こと。テストがある repo はテストも `run` に入れる。Node.js の repo は npm を使わず pnpm にする。
 
 ### production の preflight（`preflight / check`）
 
