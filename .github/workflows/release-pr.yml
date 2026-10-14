@@ -11,6 +11,10 @@ on:
         description: リリース PR の「Merge前チェック」に載せる Markdown のチェックリスト。空なら節ごと省く
         type: string
         default: ""
+      body-command:
+        description: リリース PR の本文で「含まれる変更」の前に差し込む Markdown を標準出力に書くコマンド。release/production を checkout した状態で実行する
+        type: string
+        default: ""
       deploy-note:
         description: リリース PR の「Deploy」に載せる、merge したときに何が起きるかの説明
         type: string
@@ -145,6 +149,7 @@ jobs:
           MAIN_SHA: ${{ steps.release_branch.outputs.main_sha }}
           CHECKLIST: ${{ inputs.checklist }}
           DEPLOY_NOTE: ${{ inputs.deploy-note }}
+          BODY_COMMAND: ${{ inputs.body-command }}
         run: |
           # 前回昇格点 = production の tree と一致する main 上の commit。
           # production の各コミットは main のどこかの tree の snapshot なので、
@@ -179,6 +184,10 @@ jobs:
             echo
             echo "このPRは本番昇格の承認ゲートであり、コードの再レビュー用ではありません。通常のコードレビューとCIは \`main\` に入る通常PRで完了済みです。"
             echo
+            if [ -n "$BODY_COMMAND" ]; then
+              bash -c "$BODY_COMMAND"
+              echo
+            fi
             echo "## 含まれる変更"
             echo
             echo "$changes"

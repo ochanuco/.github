@@ -100,6 +100,8 @@ jobs:
       checklist: |
         - [ ] rollback 手順を直近で確認している
       deploy-note: このPRを `production` に merge すると、Cloudflare Workers Builds が production deploy を開始します。
+      # repo 固有の節を足すときは、Markdown を出力するコマンドを渡す（例: chabatake の「反映される単位」）
+      # body-command: .github/scripts/release-units.sh
     secrets:
       APP_ID: ${{ secrets.APP_ID }}
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
