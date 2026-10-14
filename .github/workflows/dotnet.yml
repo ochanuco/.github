@@ -1,0 +1,56 @@
+name: dotnet
+
+# .NET の repo の check。restore から test までを run で渡す
+on:
+  workflow_call:
+    inputs:
+      run:
+        description: .NET SDK を用意した後に実行するコマンド
+        type: string
+        default: |
+          dotnet restore
+          dotnet build --configuration Release --no-restore
+          dotnet test --configuration Release --no-build
+      dotnet-version:
+        type: string
+        default: 10.0.x
+      runs-on:
+        type: string
+        default: ubuntu-latest
+      test-results:
+        description: '失敗時も含めて artifact に残すテスト結果のパス（例: "**/TestResults/*.trx"）。空なら残さない'
+        type: string
+        default: ""
+      timeout-minutes:
+        type: number
+        default: 20
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+      DOTNET_GENERATE_ASPNET_CERTIFICATE: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Run
+        run: ${{ inputs.run }}
+
+      - if: always() && inputs.test-results != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results
+          path: ${{ inputs.test-results }}
+          if-no-files-found: ignore

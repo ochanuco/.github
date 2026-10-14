@@ -11,6 +11,12 @@ on:
       python-version:
         type: string
         default: "3.12"
+      working-directory:
+        type: string
+        default: .
+      runs-on:
+        type: string
+        default: ubuntu-latest
       timeout-minutes:
         type: number
         default: 15
@@ -20,8 +26,11 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
