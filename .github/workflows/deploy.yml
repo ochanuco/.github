@@ -1,0 +1,117 @@
+name: deploy
+
+# 本番などへの手動デプロイ。呼び出し側は workflow_dispatch で ref を受けて呼ぶ。
+# 承認は Environment（既定は production）の Required reviewers で行い、認証情報は Environment の secret
+# OP_SA_DEPLOY（1Password の service account）から op run で渡す。main を経ていないコミットは出さない
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: デプロイする ref。main か、main 上のコミット SHA（ロールバック用）
+        type: string
+        required: true
+      run:
+        description: デプロイのコマンド（例 scripts/deploy.sh production）。op-env-file があれば op run の中で実行する
+        type: string
+        required: true
+      environment:
+        type: string
+        default: production
+      op-env-file:
+        description: op run に渡す env ファイル（repo のルートからのパス）。空なら op を使わない
+        type: string
+        default: ""
+      stack:
+        description: pnpm（依存を入れる）、uv、none のどれか
+        type: string
+        default: pnpm
+      node-version:
+        type: string
+        default: "24"
+      python-version:
+        type: string
+        default: "3.12"
+      working-directory:
+        type: string
+        default: .
+      runs-on:
+        type: string
+        default: ubuntu-latest
+      timeout-minutes:
+        type: number
+        default: 20
+    secrets:
+      # Environment の secret として置く。job に environment があるので、承認の後に Environment のものが使われる
+      OP_SA_DEPLOY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: ref guard
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          case "$REF" in
+            main | refs/heads/main) sha=$(git rev-parse HEAD) ;;
+            *)
+              if ! sha=$(git rev-parse --verify --quiet "${REF}^{commit}") || ! git merge-base --is-ancestor "$sha" HEAD; then
+                echo "::error::ref は main か、main 上のコミット SHA だけを指定できる: $REF"
+                exit 1
+              fi
+              ;;
+          esac
+          git checkout --quiet "$sha"
+          echo "deploying \`$sha\` to ${{ inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - if: inputs.stack == 'pnpm'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: ${{ inputs.working-directory }}/package.json
+
+      - if: inputs.stack == 'pnpm'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+      - if: inputs.stack == 'pnpm'
+        working-directory: ${{ inputs.working-directory }}
+        run: pnpm install --frozen-lockfile
+
+      - if: inputs.stack == 'uv'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - if: inputs.op-env-file != ''
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+
+      - name: Deploy
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SA_DEPLOY }}
+          OP_ENV_FILE: ${{ inputs.op-env-file }}
+          RUN: ${{ inputs.run }}
+        run: |
+          if [ -n "$OP_ENV_FILE" ]; then
+            op run --env-file="$GITHUB_WORKSPACE/$OP_ENV_FILE" -- bash -euo pipefail -c "$RUN"
+          else
+            bash -euo pipefail -c "$RUN"
+          fi

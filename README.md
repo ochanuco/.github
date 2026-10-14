@@ -13,7 +13,8 @@ ochanuco の repo で共有するもの。repo の設定と ruleset は [chabata
 | `rust.yml` | Rust の check。既定は fmt・clippy・test。追加のターゲットやツール（wasm-pack など）は入力で受ける |
 | `go.yml` | Go の check。既定は build・vet・test。版は go.mod から読む |
 | `dotnet.yml` | .NET の check。restore から test までを `run` で渡す |
-| `release-pr.yml` | `main` → `production` のリリース PR を作る・更新する |
+| `deploy.yml` | 承認付きの手動デプロイ。main か main 上の SHA だけを出す |
+| `release-pr.yml` | `main` → `production` のリリース PR を作る・更新する。Environment の承認が使えない private の repo（chabatake）用 |
 
 呼び出し側は commit SHA で固定する（`@<sha> # <短い説明>`）。更新は Renovate の PR で受ける。
 
@@ -76,6 +77,35 @@ jobs:
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+```
+
+### デプロイ
+
+本番は main か main 上のコミット SHA を、Actions から手動で出す。承認は Environment `production` の Required reviewers で行い、認証情報は Environment の secret `OP_SA_DEPLOY`（1Password の service account）から `op run` で渡す。Cloudflare Workers は、Workers Builds の本番ブランチのデプロイコマンドを `pnpm exec wrangler versions upload` にして自動では出さず、PR ごとの Preview は Workers Builds の Preview Builds で作る。
+
+```yaml
+# .github/workflows/deploy.yml
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: デプロイする ref（main、または main 上のコミット SHA）
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    uses: ochanuco/.github/.github/workflows/deploy.yml@<sha>
+    with:
+      ref: ${{ inputs.ref }}
+      op-env-file: .github/deploy/production.env.op
+      run: scripts/deploy.sh production
+    secrets: inherit
 ```
 
 ### リリース PR
