@@ -186,12 +186,13 @@ jobs:
             if [ -n "$CHECKLIST" ]; then
               echo "## Merge前チェック"
               echo
-              printf '%s\n' "$CHECKLIST"
+              # with の | ブロックは末尾に改行が付くので、1 つ落としてから出す
+              printf '%s\n' "${CHECKLIST%$'\n'}"
               echo
             fi
             echo "## Deploy"
             echo
-            printf '%s\n' "$DEPLOY_NOTE"
+            printf '%s\n' "${DEPLOY_NOTE%$'\n'}"
           } > release-pr-body.md
 
           existing="$(gh pr list \
