@@ -1,0 +1,5 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  // この repo 自身も共通 preset を使う。CI がないので automerge は使わない
+  extends: ['github>ochanuco/.github'],
+}
