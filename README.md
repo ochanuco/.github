@@ -118,11 +118,13 @@ jobs:
 | `github>ochanuco/.github` | `config:recommended`、action の SHA 固定、月曜朝、公開から 7 日経った版だけ、`dependencies` ラベル。更新は tooling と runtime（本番で動く依存）に分け、それぞれ non-major と major の PR にまとめる | Renovate を使うすべての repo |
 | `github>ochanuco/.github:automerge` | tooling の non-major を CI が通ったら自動マージする。runtime は人がレビューする | `ci / check` が必須になっている repo だけ。check がない repo では検証なしでマージされる |
 
-repo 側は `extends` に並べ、repo 固有のルール（ファイルごとのまとめ方など）だけを足す。
+repo 側はコメントを書ける `renovate.json5` にし、`extends` に並べたうえで repo 固有のルール（ファイルごとのまとめ方など）だけを足す。
 
-```json
+```json5
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>ochanuco/.github", "github>ochanuco/.github:automerge"]
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: ['github>ochanuco/.github', 'github>ochanuco/.github:automerge'],
 }
 ```
+
+preset 自体（`default.json`、`automerge.json`）は `.json` のままにする。Renovate は `github>ochanuco/.github` の形では `.json` の preset しか探さないため。説明は各ルールの `description` に書く。
