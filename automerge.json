@@ -1,0 +1,22 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "tooling の non-major を CI が通ったら自動マージする。ci / check が必須になっている repo だけで使う（check のない repo では検証なしでマージされる）",
+  "packageRules": [
+    {
+      "matchPackageNames": ["*"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false
+    },
+    {
+      "description": "本番で動く依存は人がレビューする",
+      "matchDepTypes": ["dependencies", "optionalDependencies", "project.dependencies", "require"],
+      "automerge": false
+    },
+    {
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "automerge": false
+    }
+  ]
+}

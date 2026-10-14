@@ -106,3 +106,23 @@ jobs:
       APP_ID: ${{ secrets.APP_ID }}
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 ```
+
+## 版
+
+`v<major>.<minor>.<patch>` のタグと GitHub Release で版を出す。入力を消す・必須にするなど呼び出し側の書き換えが要る変更は major、入力を足す変更は minor、それ以外は patch にする。呼び出し側は `@<sha> # v1.2.3` の形で固定し、Renovate が新しい版の PR を出す。
+
+## Renovate の preset
+
+| preset | 中身 | 使う repo |
+|---|---|---|
+| `github>ochanuco/.github` | `config:recommended`、action の SHA 固定、月曜朝、公開から 7 日経った版だけ、`dependencies` ラベル。更新は tooling と runtime（本番で動く依存）に分け、それぞれ non-major と major の PR にまとめる | Renovate を使うすべての repo |
+| `github>ochanuco/.github:automerge` | tooling の non-major を CI が通ったら自動マージする。runtime は人がレビューする | `ci / check` が必須になっている repo だけ。check がない repo では検証なしでマージされる |
+
+repo 側は `extends` に並べ、repo 固有のルール（ファイルごとのまとめ方など）だけを足す。
+
+```json
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>ochanuco/.github", "github>ochanuco/.github:automerge"]
+}
+```
