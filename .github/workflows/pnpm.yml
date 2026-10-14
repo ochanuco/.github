@@ -30,6 +30,9 @@ on:
         required: false
       CLOUDFLARE_ACCOUNT_ID:
         required: false
+      # EmDash の repo で、本番のスキーマから型（emdash types）を生成するためのトークン。スキーマ読み取りだけのものを渡す
+      EMDASH_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -63,4 +66,5 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EMDASH_TOKEN: ${{ secrets.EMDASH_TOKEN }}
         run: ${{ inputs.run }}
