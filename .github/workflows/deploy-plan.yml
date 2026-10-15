@@ -1,0 +1,160 @@
+name: deploy-plan
+
+# 承認の前に、何がデプロイされるかを Job Summary に出す。deploy.yml の前段のジョブとして呼び、出力の sha を deploy.yml の ref に渡す。
+# 前回デプロイした SHA は、呼び出し側の deploy workflow の直近の成功 run から読む: run 名（`... @ <ref>`）の ref がコミットならそれ、
+# main ならその run の head_sha。main は github.sha に固定するので、承認を待つ間に main が進んでも、承認した内容・出る内容・head_sha が一致する
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: デプロイする ref。main か、main 上のコミット SHA（ロールバック用）
+        type: string
+        required: true
+      environment:
+        type: string
+        default: production
+      notices:
+        description: 変更があれば注意を出すパス。1 行に `<パスの先頭>=<注意書き>`（例 `migrations/=D1 migration を手で apply する`）
+        type: string
+        default: ""
+    outputs:
+      sha:
+        description: デプロイするコミット SHA。deploy.yml の ref に渡す
+        value: ${{ jobs.plan.outputs.sha }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: resolve
+        name: ref guard
+        env:
+          REF: ${{ inputs.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          case "$REF" in
+            main | refs/heads/main) candidate="$DISPATCH_SHA" ;;
+            *) candidate="$REF" ;;
+          esac
+          if ! sha=$(git rev-parse --verify --quiet "${candidate}^{commit}") || ! git merge-base --is-ancestor "$sha" HEAD; then
+            echo "::error::ref は main か、main 上のコミット SHA だけを指定できる: $REF"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          NOTICES: ${{ inputs.notices }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          server="${GITHUB_SERVER_URL}/${REPO}"
+          commit_link() { echo "[\`$(git rev-parse --short "$1")\`](${server}/commit/$1)"; }
+
+          # 呼び出し側の workflow（owner/repo/.github/workflows/deploy.yml@refs/heads/main）の直近の成功 run
+          workflow_file="$(basename "${WORKFLOW_REF%@*}")"
+          prev="" prev_url=""
+          if ! run_line="$(gh api "repos/${REPO}/actions/workflows/${workflow_file}/runs?status=success&per_page=1" \
+            --jq '.workflow_runs[0] // empty | [.display_title, .head_sha, .html_url] | @tsv')"; then
+            echo "::warning::前回の deploy run を読めなかった（呼び出し側のジョブに actions: read が要る）"
+            run_line=""
+          fi
+          if [ -n "$run_line" ]; then
+            IFS=$'\t' read -r title head_sha prev_url <<< "$run_line"
+            ref="${title##*@ }"
+            prev="$head_sha"
+            if [ "$ref" != "$title" ] && [ "$ref" != main ] && resolved=$(git rev-parse --verify --quiet "${ref}^{commit}"); then
+              prev="$resolved"
+            fi
+          fi
+
+          # first-parent の各コミットを 1 行に: PR の merge commit は PR 番号とタイトル（merge commit の本文の 1 行目）
+          changes() {
+            git rev-list --first-parent "$1..$2" | while read -r c; do
+              subject="$(git log -1 --format=%s "$c")"
+              if [[ "$subject" =~ ^Merge\ pull\ request\ \#([0-9]+)\  ]]; then
+                number="${BASH_REMATCH[1]}"
+                pr_title="$(git log -1 --format=%b "$c" | sed -n '/[^[:space:]]/{p;q;}')"
+                echo "- [#${number}](${server}/pull/${number}) ${pr_title}"
+              else
+                echo "- $(commit_link "$c") ${subject}"
+              fi
+            done
+          }
+
+          {
+            echo "## ${ENVIRONMENT} にデプロイする内容"
+            echo
+            echo "- 今回: $(commit_link "$SHA")"
+            if [ -n "$prev" ]; then
+              echo "- 前回: $(commit_link "$prev")（[run](${prev_url})）"
+            else
+              echo "- 前回: 記録なし"
+            fi
+            echo
+
+            if [ -z "$prev" ]; then
+              echo "前回のデプロイが見つからないので、差分は出さない。"
+            elif [ "$prev" = "$SHA" ]; then
+              echo "差分なし。前回と同じコミットを出す。"
+            else
+              if git merge-base --is-ancestor "$SHA" "$prev"; then
+                echo "### ロールバック"
+                echo
+                echo "次の変更が ${ENVIRONMENT} から外れる。"
+                echo
+                changes "$SHA" "$prev"
+              else
+                base="$(git merge-base "$prev" "$SHA")"
+                if [ "$base" != "$prev" ]; then
+                  echo "前回のコミットが今回の祖先ではない。共通の祖先 $(commit_link "$base") からの変更を出す。"
+                  echo
+                fi
+                echo "### 含まれる変更"
+                echo
+                changes "$base" "$SHA"
+              fi
+
+              notices=""
+              while IFS= read -r line; do
+                [ -z "$line" ] && continue
+                prefix="${line%%=*}"
+                message="${line#*=}"
+                count="$(git diff --name-only "$prev" "$SHA" -- "$prefix" | wc -l | tr -d ' ')"
+                if [ "$count" -gt 0 ]; then
+                  notices+="- ${message}（\`${prefix}\` の ${count} ファイル）"$'\n'
+                fi
+              done <<< "$NOTICES"
+              if [ -n "$notices" ]; then
+                echo
+                echo "### 注意"
+                echo
+                printf '%s' "$notices"
+              fi
+
+              echo
+              echo "<details><summary>変更ファイル（$(git diff --shortstat "$prev" "$SHA" | sed 's/^ *//')）</summary>"
+              echo
+              echo '```'
+              git diff --stat=120 "$prev" "$SHA"
+              echo '```'
+              echo
+              echo "</details>"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
