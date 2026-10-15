@@ -14,6 +14,7 @@ ochanuco の repo で共有するもの。repo の設定と ruleset は [chabata
 | `go.yml` | Go の check。既定は build・vet・test。版は go.mod から読む |
 | `dotnet.yml` | .NET の check。restore から test までを `run` で渡す |
 | `deploy.yml` | 承認付きの手動デプロイ。main か main 上の SHA だけを出す |
+| `deploy-plan.yml` | `deploy.yml` の前段。承認の前に、前回のデプロイから何が出るかを Job Summary に書き、出す SHA を確定する |
 | `release-pr.yml` | `main` → `production` のリリース PR を作る・更新する。Environment の承認が使えない private の repo（chabatake）用 |
 
 呼び出し側は commit SHA で固定する（`@<sha> # <短い説明>`）。更新は Renovate の PR で受ける。
@@ -55,6 +56,7 @@ CI の最低限は「ビルドか型チェックが通る」こと。テスト�
 ```yaml
 # .github/workflows/deploy.yml
 name: deploy
+run-name: deploy <repo> @ ${{ inputs.ref }}
 
 on:
   workflow_dispatch:
@@ -68,14 +70,30 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
-    uses: ochanuco/.github/.github/workflows/deploy.yml@<sha>
+  plan:
+    uses: ochanuco/.github/.github/workflows/deploy-plan.yml@<sha>
+    permissions:
+      contents: read
+      actions: read
     with:
       ref: ${{ inputs.ref }}
+      notices: |
+        migrations/=D1 migration を含む。デプロイの後に手で apply する
+  deploy:
+    needs: plan
+    uses: ochanuco/.github/.github/workflows/deploy.yml@<sha>
+    with:
+      ref: ${{ needs.plan.outputs.sha }}
       op-env-file: .github/deploy/production.env.op
       run: scripts/deploy.sh production
     secrets: inherit
 ```
+
+`plan` は承認なしで先に走り、Job Summary に今回と前回の SHA、含まれる PR、変更ファイルを書く。承認待ちの run を開くとこれが見えるので、内容を確かめてから承認する。`notices` は、変更があったときに注意を出すパスの先頭と文言を 1 行ずつ書く。
+
+- `plan` は `main` を run を起動した時点の SHA（`github.sha`）に固定し、`deploy` にはその SHA を渡す。承認を待つ間に main が進んでも、承認した内容がそのまま出る
+- 前回の SHA は、同じ workflow の直近の成功 run から読む。run 名の `@` の後ろがコミットならそれ、`main` ならその run の head SHA。このため `run-name` は `... @ ${{ inputs.ref }}` の形にし、`plan` には `actions: read` を渡す
+- 前回より古い SHA を指定したときはロールバックとして、外れる変更を出す
 
 ### リリース PR
 
