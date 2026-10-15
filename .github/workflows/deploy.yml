@@ -2,7 +2,9 @@ name: deploy
 
 # 本番などへの手動デプロイ。呼び出し側は workflow_dispatch で ref を受けて呼ぶ。
 # 承認は Environment（既定は production）の Required reviewers で行い、認証情報は Environment の secret
-# OP_SA_DEPLOY（1Password の service account）から op run で渡す。main を経ていないコミットは出さない
+# OP_SA_DEPLOY（1Password の service account）から op run で渡す。main を経ていないコミットは出さない。
+# approval-environment を渡すと、その Environment（reviewers だけを持ち secret は持たない）で止まってから出る。
+# deploy-plan.yml が承認の要るときだけ名前を出すので、environment 側の reviewers を外せば、それ以外は承認なしで出る
 on:
   workflow_call:
     inputs:
@@ -17,6 +19,10 @@ on:
       environment:
         type: string
         default: production
+      approval-environment:
+        description: 空でなければ、デプロイの前にこの Environment の承認を待つ。deploy-plan.yml の出力をそのまま渡す
+        type: string
+        default: ""
       op-env-file:
         description: op run に渡す env ファイル（repo のルートからのパス）。空なら op を使わない
         type: string
@@ -49,7 +55,18 @@ permissions:
   contents: read
 
 jobs:
+  approve:
+    if: inputs.approval-environment != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: ${{ inputs.approval-environment }}
+    steps:
+      - run: echo "approved in ${{ inputs.approval-environment }}"
+
   deploy:
+    needs: approve
+    # approve が飛ばされた（承認が要らない）ときも出る。承認が拒否されたら approve が失敗して出ない
+    if: ${{ !cancelled() && (needs.approve.result == 'success' || needs.approve.result == 'skipped') }}
     runs-on: ${{ inputs.runs-on }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     environment: ${{ inputs.environment }}

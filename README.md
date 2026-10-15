@@ -13,8 +13,8 @@ ochanuco の repo で共有するもの。repo の設定と ruleset は [chabata
 | `rust.yml` | Rust の check。既定は fmt・clippy・test。追加のターゲットやツール（wasm-pack など）は入力で受ける |
 | `go.yml` | Go の check。既定は build・vet・test。版は go.mod から読む |
 | `dotnet.yml` | .NET の check。restore から test までを `run` で渡す |
-| `deploy.yml` | 承認付きの手動デプロイ。main か main 上の SHA だけを出す |
-| `deploy-plan.yml` | `deploy.yml` の前段。承認の前に、前回のデプロイから何が出るかを Job Summary に書き、出す SHA を確定する |
+| `deploy.yml` | 本番へのデプロイ。main か main 上の SHA だけを出し、承認が要るときは別の Environment で止まる |
+| `deploy-plan.yml` | `deploy.yml` の前段。前回のデプロイから何が出るかを Job Summary に書き、出す SHA と承認の要否を決める |
 | `release-pr.yml` | `main` → `production` のリリース PR を作る・更新する。Environment の承認が使えない private の repo（chabatake）用 |
 
 呼び出し側は commit SHA で固定する（`@<sha> # <短い説明>`）。更新は Renovate の PR で受ける。
@@ -51,23 +51,31 @@ CI の最低限は「ビルドか型チェックが通る」こと。テスト�
 
 ### デプロイ
 
-本番は main か main 上のコミット SHA を、Actions から手動で出す。承認は Environment `production` の Required reviewers で行い、認証情報は Environment の secret `OP_SA_DEPLOY`（1Password の service account）から `op run` で渡す。Cloudflare Workers の本番の Worker はこの経路だけで出し、Workers Builds には接続しない。Workers Builds を使うのは、PR ごとの Preview（Preview Builds の `wrangler preview`）や staging の Worker が要る repo だけにする。
+本番は main のコミットだけを出す。既定は main への push で自動的に出し、承認が要るのは `deploy-plan.yml` が危ないと判定したときだけにする。認証情報は Environment の secret `OP_SA_DEPLOY`（1Password の service account）から `op run` で渡す。Cloudflare Workers の本番の Worker はこの経路だけで出し、Workers Builds には接続しない。Workers Builds を使うのは、PR ごとの Preview（Preview Builds の `wrangler preview`）や staging の Worker が要る repo だけにする。
 
 ```yaml
 # .github/workflows/deploy.yml
 name: deploy
-run-name: deploy <repo> @ ${{ inputs.ref }}
+run-name: deploy <repo> @ ${{ inputs.ref || github.sha }}
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       ref:
-        description: デプロイする ref（main、または main 上のコミット SHA）
+        description: デプロイする ref（main、または main 上のコミット SHA。古い SHA はロールバック）
         required: true
         default: main
 
 permissions:
   contents: read
+
+# run 全体を直列にする。承認待ちの run があると後の run は待ち、待っている run は最新の 1 つだけが残る。
+# 名前は deploy.yml のジョブの concurrency（deploy-<environment>）と変える（同じ名前だと deadlock として取り消される）
+concurrency:
+  group: deploy-run-production
+  cancel-in-progress: false
 
 jobs:
   plan:
@@ -76,7 +84,8 @@ jobs:
       contents: read
       actions: read
     with:
-      ref: ${{ inputs.ref }}
+      ref: ${{ inputs.ref || 'main' }}
+      approval-environment: production-approval
       notices: |
         migrations/=D1 migration を含む。デプロイの後に手で apply する
   deploy:
@@ -84,16 +93,33 @@ jobs:
     uses: ochanuco/.github/.github/workflows/deploy.yml@<sha>
     with:
       ref: ${{ needs.plan.outputs.sha }}
+      approval-environment: ${{ needs.plan.outputs.approval-environment }}
       op-env-file: .github/deploy/production.env.op
       run: scripts/deploy.sh production
     secrets: inherit
 ```
 
-`plan` は承認なしで先に走り、Job Summary に今回と前回の SHA、含まれる PR、変更ファイルを書く。承認待ちの run を開くとこれが見えるので、内容を確かめてから承認する。`notices` は、変更があったときに注意を出すパスの先頭と文言を 1 行ずつ書く。
+Environment は 2 つ置く。
+
+| Environment | reviewers | secret | 役目 |
+|---|---|---|---|
+| `production` | なし | `OP_SA_DEPLOY` | デプロイのジョブが使う |
+| `production-approval` | あり | なし | 承認が要るときだけ、デプロイの前に止まる |
+
+どちらも deployment branch を main に限る。
+
+`plan` は Job Summary に今回と前回の SHA、承認の要否と理由、含まれる PR、変更ファイルを書く。承認が要るのは次のとき。承認待ちの run を開くと Summary が見えるので、内容を確かめてから承認する。
+
+- 前回のデプロイの記録がない
+- ロールバック（前回より古い SHA を指定した）、または前回のコミットが今回の祖先ではない
+- `notices` に書いたパスに変更がある。`notices` は、デプロイの前後に手作業が要るパスの先頭と文言を 1 行ずつ書く
+
+前回と今回の決め方:
 
 - `plan` は `main` を run を起動した時点の SHA（`github.sha`）に固定し、`deploy` にはその SHA を渡す。承認を待つ間に main が進んでも、承認した内容がそのまま出る
-- 前回の SHA は、同じ workflow の直近の成功 run から読む。run 名の `@` の後ろがコミットならそれ、`main` ならその run の head SHA。このため `run-name` は `... @ ${{ inputs.ref }}` の形にし、`plan` には `actions: read` を渡す
-- 前回より古い SHA を指定したときはロールバックとして、外れる変更を出す
+- 前回の SHA は、同じ workflow の直近の成功 run から読む。run 名の `@` の後ろがコミットならそれ、`main` ならその run の head SHA。このため `run-name` は `... @ ${{ inputs.ref || github.sha }}` の形にし、`plan` には `actions: read` を渡す
+
+手動でだけ出す repo は、`push` のきっかけと `approval-environment` を外し、`production` に reviewers を置く。この場合はすべての run が `deploy` ジョブの前で承認を待つ。
 
 ### リリース PR
 

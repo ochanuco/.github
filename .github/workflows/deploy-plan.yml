@@ -2,7 +2,9 @@ name: deploy-plan
 
 # 承認の前に、何がデプロイされるかを Job Summary に出す。deploy.yml の前段のジョブとして呼び、出力の sha を deploy.yml の ref に渡す。
 # 前回デプロイした SHA は、呼び出し側の deploy workflow の直近の成功 run から読む: run 名（`... @ <ref>`）の ref がコミットならそれ、
-# main ならその run の head_sha。main は github.sha に固定するので、承認を待つ間に main が進んでも、承認した内容・出る内容・head_sha が一致する
+# main ならその run の head_sha。main は github.sha に固定するので、承認を待つ間に main が進んでも、承認した内容・出る内容・head_sha が一致する。
+# approval-environment を渡すと、承認が要るとき（前回の記録なし・ロールバック・notices に当たる変更）だけその名前を出力する。
+# deploy.yml の approval-environment に渡せば、それ以外は承認なしで出る
 on:
   workflow_call:
     inputs:
@@ -17,10 +19,17 @@ on:
         description: 変更があれば注意を出すパス。1 行に `<パスの先頭>=<注意書き>`（例 `migrations/=D1 migration を手で apply する`）
         type: string
         default: ""
+      approval-environment:
+        description: 承認が要るときに出力する Environment の名前（required reviewers を持つもの）。空なら承認の要否を判定しない
+        type: string
+        default: ""
     outputs:
       sha:
         description: デプロイするコミット SHA。deploy.yml の ref に渡す
         value: ${{ jobs.plan.outputs.sha }}
+      approval-environment:
+        description: 承認が要るときは入力の approval-environment、要らないときは空。deploy.yml の approval-environment に渡す
+        value: ${{ jobs.plan.outputs.approval-environment }}
 
 permissions:
   contents: read
@@ -32,6 +41,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
+      approval-environment: ${{ steps.summary.outputs.approval-environment }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -55,12 +65,14 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: summary
+      - id: summary
+        name: summary
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.resolve.outputs.sha }}
           ENVIRONMENT: ${{ inputs.environment }}
           NOTICES: ${{ inputs.notices }}
+          APPROVAL_ENVIRONMENT: ${{ inputs.approval-environment }}
           REPO: ${{ github.repository }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
@@ -98,6 +110,45 @@ jobs:
             done
           }
 
+          # 前回との関係: none（記録なし）/ same / rollback / forward / diverged（前回が今回の祖先ではない）
+          base=""
+          if [ -z "$prev" ]; then
+            relation=none
+          elif [ "$prev" = "$SHA" ]; then
+            relation=same
+          elif git merge-base --is-ancestor "$SHA" "$prev"; then
+            relation=rollback
+          else
+            base="$(git merge-base "$prev" "$SHA")"
+            if [ "$base" = "$prev" ]; then relation=forward; else relation=diverged; fi
+          fi
+
+          notices=""
+          if [ "$relation" != none ] && [ "$relation" != same ]; then
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              prefix="${line%%=*}"
+              message="${line#*=}"
+              count="$(git diff --name-only "$prev" "$SHA" -- "$prefix" | wc -l | tr -d ' ')"
+              if [ "$count" -gt 0 ]; then
+                notices+="- ${message}（\`${prefix}\` の ${count} ファイル）"$'\n'
+              fi
+            done <<< "$NOTICES"
+          fi
+
+          reasons=()
+          case "$relation" in
+            none) reasons+=("前回のデプロイの記録がない") ;;
+            rollback) reasons+=("ロールバック") ;;
+            diverged) reasons+=("前回のコミットが今回の祖先ではない") ;;
+          esac
+          [ -n "$notices" ] && reasons+=("注意に当たる変更がある")
+          approval=""
+          if [ -n "$APPROVAL_ENVIRONMENT" ] && [ "${#reasons[@]}" -gt 0 ]; then
+            approval="$APPROVAL_ENVIRONMENT"
+          fi
+          echo "approval-environment=${approval}" >> "$GITHUB_OUTPUT"
+
           {
             echo "## ${ENVIRONMENT} にデプロイする内容"
             echo
@@ -107,47 +158,44 @@ jobs:
             else
               echo "- 前回: 記録なし"
             fi
+            if [ -n "$APPROVAL_ENVIRONMENT" ]; then
+              if [ -n "$approval" ]; then
+                echo "- 承認: 要る（$(IFS='、'; echo "${reasons[*]}")）。Environment \`${approval}\` で止まる"
+              else
+                echo "- 承認: 要らない。このまま出る"
+              fi
+            fi
             echo
 
-            if [ -z "$prev" ]; then
-              echo "前回のデプロイが見つからないので、差分は出さない。"
-            elif [ "$prev" = "$SHA" ]; then
-              echo "差分なし。前回と同じコミットを出す。"
-            else
-              if git merge-base --is-ancestor "$SHA" "$prev"; then
+            case "$relation" in
+              none) echo "前回のデプロイが見つからないので、差分は出さない。" ;;
+              same) echo "差分なし。前回と同じコミットを出す。" ;;
+              rollback)
                 echo "### ロールバック"
                 echo
                 echo "次の変更が ${ENVIRONMENT} から外れる。"
                 echo
                 changes "$SHA" "$prev"
-              else
-                base="$(git merge-base "$prev" "$SHA")"
-                if [ "$base" != "$prev" ]; then
+                ;;
+              *)
+                if [ "$relation" = diverged ]; then
                   echo "前回のコミットが今回の祖先ではない。共通の祖先 $(commit_link "$base") からの変更を出す。"
                   echo
                 fi
                 echo "### 含まれる変更"
                 echo
                 changes "$base" "$SHA"
-              fi
+                ;;
+            esac
 
-              notices=""
-              while IFS= read -r line; do
-                [ -z "$line" ] && continue
-                prefix="${line%%=*}"
-                message="${line#*=}"
-                count="$(git diff --name-only "$prev" "$SHA" -- "$prefix" | wc -l | tr -d ' ')"
-                if [ "$count" -gt 0 ]; then
-                  notices+="- ${message}（\`${prefix}\` の ${count} ファイル）"$'\n'
-                fi
-              done <<< "$NOTICES"
-              if [ -n "$notices" ]; then
-                echo
-                echo "### 注意"
-                echo
-                printf '%s' "$notices"
-              fi
+            if [ -n "$notices" ]; then
+              echo
+              echo "### 注意"
+              echo
+              printf '%s' "$notices"
+            fi
 
+            if [ "$relation" != none ] && [ "$relation" != same ]; then
               echo
               echo "<details><summary>変更ファイル（$(git diff --shortstat "$prev" "$SHA" | sed 's/^ *//')）</summary>"
               echo
