@@ -18,7 +18,7 @@ ochanuco の repo で共有するもの。repo の設定と ruleset は [chabata
 
 呼び出し側は commit SHA で固定する（`@<sha> # <短い説明>`）。更新は Renovate の PR で受ける。
 
-必須の status check の名前は「呼び出し側のジョブ名 / 呼ばれた側のジョブ名」になる。check は `ci / check`、production の preflight は `preflight / check` に揃え、chabatake の ruleset はこの名前を必須にする。
+必須の status check の名前は「呼び出し側のジョブ名 / 呼ばれた側のジョブ名」になる。check は `ci / check` に揃え、chabatake の ruleset はこの名前を必須にする。
 
 ### check（`ci / check`）
 
@@ -48,40 +48,9 @@ jobs:
 
 CI の最低限は「ビルドか型チェックが通る」こと。テストがある repo はテストも `run` に入れる。Node.js の repo は npm を使わず pnpm にする。
 
-### production の preflight（`preflight / check`）
-
-production への昇格 PR に付ける check。repo ごとの手順は package.json の script（例: `preflight`）にまとめ、それを呼ぶ。
-
-```yaml
-# .github/workflows/production-preflight.yml
-name: production preflight
-
-on:
-  pull_request:
-    branches: [production]
-    types: [opened, synchronize, reopened, ready_for_review]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: production-preflight-${{ github.ref }}
-  cancel-in-progress: true
-
-jobs:
-  preflight:
-    uses: ochanuco/.github/.github/workflows/pnpm.yml@<sha>
-    with:
-      run: pnpm run preflight
-    secrets:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-```
-
 ### デプロイ
 
-本番は main か main 上のコミット SHA を、Actions から手動で出す。承認は Environment `production` の Required reviewers で行い、認証情報は Environment の secret `OP_SA_DEPLOY`（1Password の service account）から `op run` で渡す。Cloudflare Workers は、Workers Builds の本番ブランチのデプロイコマンドを `pnpm exec wrangler versions upload` にして自動では出さず、PR ごとの Preview は Workers Builds の Preview Builds で作る。
+本番は main か main 上のコミット SHA を、Actions から手動で出す。承認は Environment `production` の Required reviewers で行い、認証情報は Environment の secret `OP_SA_DEPLOY`（1Password の service account）から `op run` で渡す。Cloudflare Workers の本番の Worker はこの経路だけで出し、Workers Builds には接続しない。Workers Builds を使うのは、PR ごとの Preview（Preview Builds の `wrangler preview`）や staging の Worker が要る repo だけにする。
 
 ```yaml
 # .github/workflows/deploy.yml
@@ -110,37 +79,9 @@ jobs:
 
 ### リリース PR
 
-PR の作成者を GitHub App にする。`GITHUB_TOKEN` で作った PR では後続の workflow が動かず、CODEOWNER が自分自身だと自分で承認できないため。App の `APP_ID` と `APP_PRIVATE_KEY` を repo の secret に置く。`production` ブランチは先に手で作っておく。
+chabatake 専用。Environment の承認が使えない private の repo で、`production` ブランチへのリリース PR のマージを承認とする。呼び出し方は chabatake の `.github/workflows/release-pr.yml` を参照する。
 
-```yaml
-# .github/workflows/production-release-pr.yml
-name: production release PR
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: production-release-pr
-  cancel-in-progress: false
-
-jobs:
-  release-pr:
-    uses: ochanuco/.github/.github/workflows/release-pr.yml@<sha>
-    with:
-      checklist: |
-        - [ ] rollback 手順を直近で確認している
-      deploy-note: このPRを `production` に merge すると、Cloudflare Workers Builds が production deploy を開始します。
-      # repo 固有の節を足すときは、Markdown を出力するコマンドを渡す（例: chabatake の「反映される単位」）
-      # body-command: .github/scripts/release-units.sh
-    secrets:
-      APP_ID: ${{ secrets.APP_ID }}
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
-```
+PR の作成者は GitHub App にする。`GITHUB_TOKEN` で作った PR では後続の workflow が動かないため。App の `APP_ID` と `APP_PRIVATE_KEY` を repo の secret に置く。
 
 ## 版
 
