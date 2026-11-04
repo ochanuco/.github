@@ -4,7 +4,9 @@ name: deploy-plan
 # 前回デプロイした SHA は、呼び出し側の deploy workflow の直近の成功 run から読む: run 名（`... @ <ref>`）の ref がコミットならそれ、
 # main ならその run の head_sha。main は github.sha に固定するので、承認を待つ間に main が進んでも、承認した内容・出る内容・head_sha が一致する。
 # approval-environment を渡すと、承認が要るとき（前回の記録なし・ロールバック・notices に当たる変更）だけその名前を出力する。
-# deploy.yml の approval-environment に渡せば、それ以外は承認なしで出る
+# deploy.yml の approval-environment に渡せば、それ以外は承認なしで出る。
+# migrations に SQL migration の置き場を渡すと、追加された migration を文ごとに分類し、追加系（CREATE TABLE / CREATE INDEX /
+# ALTER TABLE ... ADD COLUMN）だけなら承認なしで出し、それ以外の文（DROP・DELETE・UPDATE・作り直しなど）か、既存の migration の書き換えがあれば止める
 on:
   workflow_call:
     inputs:
@@ -17,6 +19,10 @@ on:
         default: production
       notices:
         description: 変更があれば注意を出すパス。1 行に `<パスの先頭>=<注意書き>`（例 `migrations/=D1 migration を手で apply する`）
+        type: string
+        default: ""
+      migrations:
+        description: SQL migration の置き場（1 行に 1 つ、例 `migrations/`）。追加系の文だけの migration は承認なしで出し、それ以外は承認で止める
         type: string
         default: ""
       approval-environment:
@@ -72,6 +78,7 @@ jobs:
           SHA: ${{ steps.resolve.outputs.sha }}
           ENVIRONMENT: ${{ inputs.environment }}
           NOTICES: ${{ inputs.notices }}
+          MIGRATIONS: ${{ inputs.migrations }}
           APPROVAL_ENVIRONMENT: ${{ inputs.approval-environment }}
           REPO: ${{ github.repository }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
@@ -136,6 +143,51 @@ jobs:
             done <<< "$NOTICES"
           fi
 
+          # migration を文ごとに分類する。追加系だけのファイルは承認なしで出し、それ以外は止めて該当する文を見せる
+          migrations="" migrations_gate=""
+          if [ "$relation" != none ] && [ "$relation" != same ] && [ -n "$MIGRATIONS" ]; then
+            gate_file="$(mktemp)"
+            migrations="$(
+              while IFS= read -r dir; do
+                [ -z "$dir" ] && continue
+                git diff --name-status --no-renames "$prev" "$SHA" -- "$dir"
+              done <<< "$MIGRATIONS" | SHA="$SHA" PREV="$prev" GATE_FILE="$gate_file" python3 -c '
+          import os, re, subprocess, sys
+          sha, prev, gate = os.environ["SHA"], os.environ["PREV"], os.environ["GATE_FILE"]
+          def sql(commit, path):
+              text = subprocess.run(["git", "show", f"{commit}:{path}"], capture_output=True, text=True, check=True).stdout
+              text = re.sub(r"--[^\n]*", "", text)
+              return [" ".join(s.split()) for s in text.split(";") if s.strip()]
+          safe = re.compile(r"^(create\s+table|create\s+(unique\s+)?index|alter\s+table\s+\S+\s+add\s)", re.I)
+          blocked = False
+          for line in sys.stdin:
+              status, path = line.rstrip("\n").split("\t", 1)
+              if not path.endswith(".sql"):
+                  continue
+              if status == "M" and sql(prev, path) == sql(sha, path):
+                  print(f"- `{path}`: コメントだけの変更")
+                  continue
+              if status != "A":
+                  blocked = True
+                  print(f"- ⚠️ `{path}`: 既存の migration の変更（{status}）。適用済みの migration は書き換えない")
+                  continue
+              statements = sql(sha, path)
+              unsafe = [s for s in statements if not safe.match(s)]
+              if unsafe:
+                  blocked = True
+                  print(f"- ⚠️ `{path}`: 追加系でない文が {len(unsafe)} 個")
+                  for s in unsafe[:5]:
+                      print(f"  - `{s[:120]}`")
+              else:
+                  print(f"- `{path}`: 追加系だけ（{len(statements)} 文）")
+          if blocked:
+              open(gate, "w").write("1")
+          '
+            )"
+            [ -s "$gate_file" ] && migrations_gate=1
+            rm -f "$gate_file"
+          fi
+
           reasons=()
           case "$relation" in
             none) reasons+=("前回のデプロイの記録がない") ;;
@@ -143,6 +195,7 @@ jobs:
             diverged) reasons+=("前回のコミットが今回の祖先ではない") ;;
           esac
           [ -n "$notices" ] && reasons+=("注意に当たる変更がある")
+          [ -n "$migrations_gate" ] && reasons+=("追加系でない migration がある")
           approval=""
           if [ -n "$APPROVAL_ENVIRONMENT" ] && [ "${#reasons[@]}" -gt 0 ]; then
             approval="$APPROVAL_ENVIRONMENT"
@@ -160,7 +213,8 @@ jobs:
             fi
             if [ -n "$APPROVAL_ENVIRONMENT" ]; then
               if [ -n "$approval" ]; then
-                echo "- 承認: 要る（$(IFS='、'; echo "${reasons[*]}")）。Environment \`${approval}\` で止まる"
+                joined="$(printf '%s、' "${reasons[@]}")"
+                echo "- 承認: 要る（${joined%、}）。Environment \`${approval}\` で止まる"
               else
                 echo "- 承認: 要らない。このまま出る"
               fi
@@ -187,6 +241,13 @@ jobs:
                 changes "$base" "$SHA"
                 ;;
             esac
+
+            if [ -n "$migrations" ]; then
+              echo
+              echo "### migration"
+              echo
+              printf '%s\n' "$migrations"
+            fi
 
             if [ -n "$notices" ]; then
               echo
