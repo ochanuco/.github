@@ -86,8 +86,10 @@ jobs:
     with:
       ref: ${{ inputs.ref || 'main' }}
       approval-environment: production-approval
+      migrations: |
+        migrations/
       notices: |
-        migrations/=D1 migration を含む。デプロイの後に手で apply する
+        manifests/=デプロイの後に手で反映する
   deploy:
     needs: plan
     uses: ochanuco/.github/.github/workflows/deploy.yml@<sha>
@@ -113,6 +115,9 @@ Environment は 2 つ置く。
 - 前回のデプロイの記録がない
 - ロールバック（前回より古い SHA を指定した）、または前回のコミットが今回の祖先ではない
 - `notices` に書いたパスに変更がある。`notices` は、デプロイの前後に手作業が要るパスの先頭と文言を 1 行ずつ書く
+- `migrations` に書いた置き場に、追加系でない SQL migration がある
+
+`migrations` は SQL migration の置き場を 1 行に 1 つ書く。前回から足された `.sql` をコメントを除いて文に分け、すべてが `CREATE TABLE`・`CREATE [UNIQUE] INDEX`・`ALTER TABLE ... ADD` なら承認なしで出す。それ以外の文（`DROP`・`DELETE`・`UPDATE`・`INSERT`・`PRAGMA`、テーブルの作り直し）があるか、既存の migration をコメント以外で書き換えた・消したときは止める。Summary にはファイルごとの判定と、止めた文を出す。migration を当てるのは呼び出し側の `run`（deploy の中）で、`plan` は判定だけをする
 
 前回と今回の決め方:
 
