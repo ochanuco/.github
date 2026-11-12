@@ -244,6 +244,13 @@ jobs:
 
           attempt=1
           while [ "$attempt" -le 6 ]; do
+            pr_state="$(gh pr view "$pr_number" --json state --jq '.state' 2>/dev/null || echo UNKNOWN)"
+            if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
+              # 確認の途中で merge（auto-merge など）や close されると mergeStateStatus は
+              # UNKNOWN のままになるので、もう確かめるものは無いとして抜ける。
+              echo "::notice::release PR #$pr_number is already $pr_state; nothing to check."
+              exit 0
+            fi
             state="$(gh pr view "$pr_number" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null || echo UNKNOWN)"
             case "$state" in
               BEHIND)
