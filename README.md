@@ -119,7 +119,7 @@ Environment は 2 つ置く。
 
 `migrations` は SQL migration の置き場を 1 行に 1 つ書く。前回から足された `.sql` をコメントを除いて文に分け、すべてが `CREATE TABLE`・`CREATE [UNIQUE] INDEX`・`ALTER TABLE ... ADD` なら承認なしで出す。それ以外の文（`DROP`・`DELETE`・`UPDATE`・`INSERT`・`PRAGMA`、テーブルの作り直し）があるか、既存の migration をコメント以外で書き換えた・消したときは止める。Summary にはファイルごとの判定と、止めた文を出す。migration を当てるのは呼び出し側の `run`（deploy の中）で、`plan` は判定だけをする
 
-判定と Summary は `tools/deploy-plan`（Go、標準ライブラリだけ）が持つ。`plan` は呼び出し側の checkout とは別に、この repo を `job.workflow_sha`（呼び出し側が `@<sha>` で固定したコミット）で checkout し、そのツールを `go run` する。workflow とツールは常に同じコミットのものが動くので、呼び出し側が固定するのは workflow の SHA だけでよい。ツールのテストは、この repo の `ci / check`（`go.yml` を `tools/deploy-plan` で呼ぶ）が PR と main への push で動かす。
+判定と Summary は `tools/deploy-plan`（Go、標準ライブラリだけ）が持つ。`plan` は呼び出し側の checkout とは別に、この repo を `job.workflow_sha`（呼び出し側が `@<sha>` で固定したコミット）で checkout し、そのツールを `go run` する。workflow とツールは常に同じコミットのものが動くので、呼び出し側が固定するのは workflow の SHA だけでよい。ツールのテストは、この repo の `ci / check`（`go.yml` で `tools/` の各 module を確かめる）が PR と main への push で動かす。
 
 前回と今回の決め方:
 
@@ -133,6 +133,14 @@ Environment は 2 つ置く。
 chabatake 専用。Environment の承認が使えない private の repo で、`production` ブランチへのリリース PR のマージを承認とする。呼び出し方は chabatake の `.github/workflows/release-pr.yml` を参照する。
 
 PR の作成者は GitHub App にする。`GITHUB_TOKEN` で作った PR では後続の workflow が動かないため。App の `APP_ID` と `APP_PRIVATE_KEY` を repo の secret に置く。
+
+`main` に push するたびに、`release/production` を `production` の先端に `main` の tree の snapshot を 1 つ積んだ形で作り直す。`production` との差がなければ PR は触らない。差があれば、リリース PR を作るか、open なものの本文を書き換える。タイトル（`🚀リリース <作った日時（JST）>`）は作ったときのまま残す。
+
+本文の「含まれる変更」は、前回のリリースから `main` に入った first-parent のコミットの件名を並べる。前回のリリースは、`main` を first-parent で遡って `production` と tree が一致した最初のコミットとする。merge commit の件名は PR 番号（`- #12`）にし、direct push の件名はそのまま載せる。前回のリリースが見つからないときは一覧を省き、その旨を書く。`body-command` は `release/production` を checkout した呼び出し側の repo で `bash -c` に渡し、標準出力を「含まれる変更」の前に入れる。
+
+PR を作った後、`mergeStateStatus` が `BEHIND` なら失敗させる。`BEHIND` のときは update-branch ではなく workflow を再実行して `release/production` を作り直す。`UNKNOWN` の間は 5 秒おきに 6 回まで待ち、決まらなければ失敗させる。待つ間に PR が merge か close されたら成功とする。
+
+判定と本文の整形は `tools/release-pr`（Go、標準ライブラリだけ）が持ち、`deploy-plan` と同じく `job.workflow_sha` で checkout したツールを `go run` する。`setup-go` が job に足す `GOTOOLCHAIN=local` は `body-command` には渡さないので、`body-command` の中の `go` は呼び出し側の `go.mod` の版を使える。ツールのテストは `deploy-plan` と同じ `ci / check` が動かす。
 
 ## 版
 

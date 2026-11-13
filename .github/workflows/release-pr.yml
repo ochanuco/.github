@@ -125,148 +125,56 @@ jobs:
             push_with_retry git push "$remote" release/production:refs/heads/release/production
           fi
 
-      - name: Check production delta
-        id: production_delta
+      - name: Fetch production
         env:
           PRODUCTION_RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           remote="https://x-access-token:${PRODUCTION_RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git fetch --no-tags "$remote" production:refs/remotes/origin/production
 
-          ahead_count="$(git rev-list --count origin/production..release/production)"
-          if [ "$ahead_count" = "0" ]; then
-            echo "::notice::production is already up to date with main; skipping production release PR creation."
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            echo "release/production is $ahead_count commit(s) ahead of production."
+      # 判定と本文の整形は tools/release-pr（Go）が持つ。呼び出し側が固定したのと同じコミットのツールを使う。
+      # job.workflow_* はこの（呼ばれた側の）workflow を指す。空のまま checkout すると既定ブランチになるので止める
+      - name: tool ref guard
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$WORKFLOW_REPOSITORY" ] || [ -z "$WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_repository か job.workflow_sha が空で、release-pr のツールのコミットを決められない"
+            exit 1
           fi
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-pr-tool
+          persist-credentials: false
+
+      # 呼び出し側の cache を汚さないように、cache は使わない（ツールは標準ライブラリだけ）
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .release-pr-tool/tools/release-pr/go.mod
+          cache: false
+
+      # production との差がなければ has_changes=false を出して PR を触らない
       - name: Create or update production PR
-        if: steps.production_delta.outputs.has_changes == 'true'
+        id: production_pr
+        working-directory: .release-pr-tool/tools/release-pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          REPO_DIR: ${{ github.workspace }}
           MAIN_SHA: ${{ steps.release_branch.outputs.main_sha }}
           CHECKLIST: ${{ inputs.checklist }}
           DEPLOY_NOTE: ${{ inputs.deploy-note }}
           BODY_COMMAND: ${{ inputs.body-command }}
-        run: |
-          # 前回昇格点 = production の tree と一致する main 上の commit。
-          # production の各コミットは main のどこかの tree の snapshot なので、
-          # first-parent を遡って tree が一致した commit が前回昇格した main 位置。
-          production_tree="$(git rev-parse 'origin/production^{tree}')"
-          base_sha=""
-          for sha in $(git rev-list --first-parent origin/main); do
-            if [ "$(git rev-parse "${sha}^{tree}")" = "$production_tree" ]; then
-              base_sha="$sha"
-              break
-            fi
-          done
+        run: go run . pr
 
-          if [ -n "$base_sha" ]; then
-            # main は merge commit のみなので first-parent の merge subject から
-            # PR 番号を列挙できる (direct push は subject をそのまま載せる)。
-            changes="$(git log --first-parent --format='- %s' "${base_sha}..origin/main" \
-              | sed -E 's/- Merge pull request (#[0-9]+) from .*/- \1/')"
-            if [ -z "$changes" ]; then
-              changes="(差分コミットなし — tree 差分のみ)"
-            fi
-          else
-            changes="(前回昇格点を main 上で特定できなかったため一覧は省略。diff を確認してください)"
-          fi
-
-          {
-            echo "## 概要"
-            echo
-            echo "\`main\` (\`${MAIN_SHA}\`) の内容を \`production\` に昇格するリリースPRです。"
-            echo
-            echo "\`main\` に新しい PR が merge されるたびに、このPRは main 先端の snapshot に自動更新されます。merge 時点の diff がそのまま本番に deploy される内容です。"
-            echo
-            echo "このPRは本番昇格の承認ゲートであり、コードの再レビュー用ではありません。通常のコードレビューとCIは \`main\` に入る通常PRで完了済みです。"
-            echo
-            if [ -n "$BODY_COMMAND" ]; then
-              bash -c "$BODY_COMMAND"
-              echo
-            fi
-            echo "## 含まれる変更"
-            echo
-            echo "$changes"
-            echo
-            if [ -n "$CHECKLIST" ]; then
-              echo "## Merge前チェック"
-              echo
-              # with の | ブロックは末尾に改行が付くので、1 つ落としてから出す
-              printf '%s\n' "${CHECKLIST%$'\n'}"
-              echo
-            fi
-            echo "## Deploy"
-            echo
-            printf '%s\n' "${DEPLOY_NOTE%$'\n'}"
-          } > release-pr-body.md
-
-          existing="$(gh pr list \
-            --base production \
-            --head release/production \
-            --state open \
-            --json number \
-            --jq '.[0].number // empty')"
-
-          # title は初回作成時の日時のまま維持する (「いつから昇格待ちか」を表す)。
-          # 内容は body と diff が常に main 先端を示すので title 更新は不要。
-          if [ -n "$existing" ]; then
-            gh pr edit "$existing" --body-file release-pr-body.md
-            echo "Updated PR #$existing"
-          else
-            title="🚀リリース $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')"
-            gh pr create --base production --head release/production --title "$title" --body-file release-pr-body.md
-          fi
-
-      # release/production は production の先端に main の snapshot commit を1つ
-      # 積む形で作成するため、通常は production と fast-forward 関係にあり
-      # BEHIND にはならない。
-      # production に新コミットが来て BEHIND になった場合は update-branch (merge commit
-      # を生成) ではなく、このワークフローを再実行して release/production を作り直す。
       - name: Check release PR branch is not behind
-        if: steps.production_delta.outputs.has_changes == 'true'
+        if: steps.production_pr.outputs.has_changes == 'true'
+        working-directory: .release-pr-tool/tools/release-pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          pr_number="$(gh pr list \
-            --base production \
-            --head release/production \
-            --state open \
-            --json number \
-            --jq '.[0].number // empty')"
-          if [ -z "$pr_number" ]; then
-            echo "::notice::no open release PR; nothing to check."
-            exit 0
-          fi
-
-          attempt=1
-          while [ "$attempt" -le 6 ]; do
-            pr_state="$(gh pr view "$pr_number" --json state --jq '.state' 2>/dev/null || echo UNKNOWN)"
-            if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
-              # 確認の途中で merge（auto-merge など）や close されると mergeStateStatus は
-              # UNKNOWN のままになるので、もう確かめるものは無いとして抜ける。
-              echo "::notice::release PR #$pr_number is already $pr_state; nothing to check."
-              exit 0
-            fi
-            state="$(gh pr view "$pr_number" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null || echo UNKNOWN)"
-            case "$state" in
-              BEHIND)
-                echo "::error::release PR #$pr_number is BEHIND production. Re-run this workflow to rebuild release/production on the latest production tip."
-                exit 1
-                ;;
-              UNKNOWN)
-                echo "mergeability still computing; waiting."
-                sleep 5
-                ;;
-              *)
-                echo "::notice::release PR #$pr_number state=$state; branch is up to date."
-                exit 0
-                ;;
-            esac
-            attempt=$((attempt + 1))
-          done
-          echo "::error::mergeability not confirmed after retries; operator should verify the PR is not behind."
-          exit 1
+          REPO: ${{ github.repository }}
+        run: go run . check

@@ -14,7 +14,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # tools の module を 1 つの job で確かめて、check の名前を `ci / check` のままにする。
+  # Go の版は working-directory の go.mod から読むので、tools の go.mod の go は揃えておく
   ci:
     uses: ./.github/workflows/go.yml
     with:
       working-directory: tools/deploy-plan
+      run: |
+        for module in deploy-plan release-pr; do
+          (cd "../$module" && go build ./... && go vet ./... && go test ./...)
+        done
