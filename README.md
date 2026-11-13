@@ -119,6 +119,8 @@ Environment は 2 つ置く。
 
 `migrations` は SQL migration の置き場を 1 行に 1 つ書く。前回から足された `.sql` をコメントを除いて文に分け、すべてが `CREATE TABLE`・`CREATE [UNIQUE] INDEX`・`ALTER TABLE ... ADD` なら承認なしで出す。それ以外の文（`DROP`・`DELETE`・`UPDATE`・`INSERT`・`PRAGMA`、テーブルの作り直し）があるか、既存の migration をコメント以外で書き換えた・消したときは止める。Summary にはファイルごとの判定と、止めた文を出す。migration を当てるのは呼び出し側の `run`（deploy の中）で、`plan` は判定だけをする
 
+判定と Summary は `tools/deploy-plan`（Go、標準ライブラリだけ）が持つ。`plan` は呼び出し側の checkout とは別に、この repo を `job.workflow_sha`（呼び出し側が `@<sha>` で固定したコミット）で checkout し、そのツールを `go run` する。workflow とツールは常に同じコミットのものが動くので、呼び出し側が固定するのは workflow の SHA だけでよい。ツールのテストは、この repo の `ci / check`（`go.yml` を `tools/deploy-plan` で呼ぶ）が PR と main への push で動かす。
+
 前回と今回の決め方:
 
 - `plan` は `main` を run を起動した時点の SHA（`github.sha`）に固定し、`deploy` にはその SHA を渡す。承認を待つ間に main が進んでも、承認した内容がそのまま出る

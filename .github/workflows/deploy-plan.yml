@@ -71,10 +71,37 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
+      # 判定と Summary は tools/deploy-plan（Go）が持つ。呼び出し側が固定したのと同じコミットのツールを使う。
+      # job.workflow_* はこの（呼ばれた側の）workflow を指す。空のまま checkout すると既定ブランチになるので止める
+      - name: tool ref guard
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$WORKFLOW_REPOSITORY" ] || [ -z "$WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_repository か job.workflow_sha が空で、deploy-plan のツールのコミットを決められない"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .deploy-plan-tool
+          persist-credentials: false
+
+      # 呼び出し側の cache を汚さないように、cache は使わない（ツールは標準ライブラリだけ）
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .deploy-plan-tool/tools/deploy-plan/go.mod
+          cache: false
+
       - id: summary
         name: summary
+        working-directory: .deploy-plan-tool/tools/deploy-plan
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO_DIR: ${{ github.workspace }}
           SHA: ${{ steps.resolve.outputs.sha }}
           ENVIRONMENT: ${{ inputs.environment }}
           NOTICES: ${{ inputs.notices }}
@@ -82,188 +109,4 @@ jobs:
           APPROVAL_ENVIRONMENT: ${{ inputs.approval-environment }}
           REPO: ${{ github.repository }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
-        run: |
-          server="${GITHUB_SERVER_URL}/${REPO}"
-          commit_link() { echo "[\`$(git rev-parse --short "$1")\`](${server}/commit/$1)"; }
-
-          # 呼び出し側の workflow（owner/repo/.github/workflows/deploy.yml@refs/heads/main）の直近の成功 run
-          workflow_file="$(basename "${WORKFLOW_REF%@*}")"
-          prev="" prev_url=""
-          if ! run_line="$(gh api "repos/${REPO}/actions/workflows/${workflow_file}/runs?status=success&per_page=1" \
-            --jq '.workflow_runs[0] // empty | [.display_title, .head_sha, .html_url] | @tsv')"; then
-            echo "::warning::前回の deploy run を読めなかった（呼び出し側のジョブに actions: read が要る）"
-            run_line=""
-          fi
-          if [ -n "$run_line" ]; then
-            IFS=$'\t' read -r title head_sha prev_url <<< "$run_line"
-            ref="${title##*@ }"
-            prev="$head_sha"
-            if [ "$ref" != "$title" ] && [ "$ref" != main ] && resolved=$(git rev-parse --verify --quiet "${ref}^{commit}"); then
-              prev="$resolved"
-            fi
-          fi
-
-          # first-parent の各コミットを 1 行に: PR の merge commit は PR 番号とタイトル（merge commit の本文の 1 行目）
-          changes() {
-            git rev-list --first-parent "$1..$2" | while read -r c; do
-              subject="$(git log -1 --format=%s "$c")"
-              if [[ "$subject" =~ ^Merge\ pull\ request\ \#([0-9]+)\  ]]; then
-                number="${BASH_REMATCH[1]}"
-                pr_title="$(git log -1 --format=%b "$c" | sed -n '/[^[:space:]]/{p;q;}')"
-                echo "- [#${number}](${server}/pull/${number}) ${pr_title}"
-              else
-                echo "- $(commit_link "$c") ${subject}"
-              fi
-            done
-          }
-
-          # 前回との関係: none（記録なし）/ same / rollback / forward / diverged（前回が今回の祖先ではない）
-          base=""
-          if [ -z "$prev" ]; then
-            relation=none
-          elif [ "$prev" = "$SHA" ]; then
-            relation=same
-          elif git merge-base --is-ancestor "$SHA" "$prev"; then
-            relation=rollback
-          else
-            base="$(git merge-base "$prev" "$SHA")"
-            if [ "$base" = "$prev" ]; then relation=forward; else relation=diverged; fi
-          fi
-
-          notices=""
-          if [ "$relation" != none ] && [ "$relation" != same ]; then
-            while IFS= read -r line; do
-              [ -z "$line" ] && continue
-              prefix="${line%%=*}"
-              message="${line#*=}"
-              count="$(git diff --name-only "$prev" "$SHA" -- "$prefix" | wc -l | tr -d ' ')"
-              if [ "$count" -gt 0 ]; then
-                notices+="- ${message}（\`${prefix}\` の ${count} ファイル）"$'\n'
-              fi
-            done <<< "$NOTICES"
-          fi
-
-          # migration を文ごとに分類する。追加系だけのファイルは承認なしで出し、それ以外は止めて該当する文を見せる
-          migrations="" migrations_gate=""
-          if [ "$relation" != none ] && [ "$relation" != same ] && [ -n "$MIGRATIONS" ]; then
-            gate_file="$(mktemp)"
-            migrations="$(
-              while IFS= read -r dir; do
-                [ -z "$dir" ] && continue
-                git diff --name-status --no-renames "$prev" "$SHA" -- "$dir"
-              done <<< "$MIGRATIONS" | SHA="$SHA" PREV="$prev" GATE_FILE="$gate_file" python3 -c '
-          import os, re, subprocess, sys
-          sha, prev, gate = os.environ["SHA"], os.environ["PREV"], os.environ["GATE_FILE"]
-          def sql(commit, path):
-              text = subprocess.run(["git", "show", f"{commit}:{path}"], capture_output=True, text=True, check=True).stdout
-              text = re.sub(r"--[^\n]*", "", text)
-              return [" ".join(s.split()) for s in text.split(";") if s.strip()]
-          safe = re.compile(r"^(create\s+table|create\s+(unique\s+)?index|alter\s+table\s+\S+\s+add\s)", re.I)
-          blocked = False
-          for line in sys.stdin:
-              status, path = line.rstrip("\n").split("\t", 1)
-              if not path.endswith(".sql"):
-                  continue
-              if status == "M" and sql(prev, path) == sql(sha, path):
-                  print(f"- `{path}`: コメントだけの変更")
-                  continue
-              if status != "A":
-                  blocked = True
-                  print(f"- ⚠️ `{path}`: 既存の migration の変更（{status}）。適用済みの migration は書き換えない")
-                  continue
-              statements = sql(sha, path)
-              unsafe = [s for s in statements if not safe.match(s)]
-              if unsafe:
-                  blocked = True
-                  print(f"- ⚠️ `{path}`: 追加系でない文が {len(unsafe)} 個")
-                  for s in unsafe[:5]:
-                      print(f"  - `{s[:120]}`")
-              else:
-                  print(f"- `{path}`: 追加系だけ（{len(statements)} 文）")
-          if blocked:
-              open(gate, "w").write("1")
-          '
-            )"
-            [ -s "$gate_file" ] && migrations_gate=1
-            rm -f "$gate_file"
-          fi
-
-          reasons=()
-          case "$relation" in
-            none) reasons+=("前回のデプロイの記録がない") ;;
-            rollback) reasons+=("ロールバック") ;;
-            diverged) reasons+=("前回のコミットが今回の祖先ではない") ;;
-          esac
-          [ -n "$notices" ] && reasons+=("注意に当たる変更がある")
-          [ -n "$migrations_gate" ] && reasons+=("追加系でない migration がある")
-          approval=""
-          if [ -n "$APPROVAL_ENVIRONMENT" ] && [ "${#reasons[@]}" -gt 0 ]; then
-            approval="$APPROVAL_ENVIRONMENT"
-          fi
-          echo "approval-environment=${approval}" >> "$GITHUB_OUTPUT"
-
-          {
-            echo "## ${ENVIRONMENT} にデプロイする内容"
-            echo
-            echo "- 今回: $(commit_link "$SHA")"
-            if [ -n "$prev" ]; then
-              echo "- 前回: $(commit_link "$prev")（[run](${prev_url})）"
-            else
-              echo "- 前回: 記録なし"
-            fi
-            if [ -n "$APPROVAL_ENVIRONMENT" ]; then
-              if [ -n "$approval" ]; then
-                joined="$(printf '%s、' "${reasons[@]}")"
-                echo "- 承認: 要る（${joined%、}）。Environment \`${approval}\` で止まる"
-              else
-                echo "- 承認: 要らない。このまま出る"
-              fi
-            fi
-            echo
-
-            case "$relation" in
-              none) echo "前回のデプロイが見つからないので、差分は出さない。" ;;
-              same) echo "差分なし。前回と同じコミットを出す。" ;;
-              rollback)
-                echo "### ロールバック"
-                echo
-                echo "次の変更が ${ENVIRONMENT} から外れる。"
-                echo
-                changes "$SHA" "$prev"
-                ;;
-              *)
-                if [ "$relation" = diverged ]; then
-                  echo "前回のコミットが今回の祖先ではない。共通の祖先 $(commit_link "$base") からの変更を出す。"
-                  echo
-                fi
-                echo "### 含まれる変更"
-                echo
-                changes "$base" "$SHA"
-                ;;
-            esac
-
-            if [ -n "$migrations" ]; then
-              echo
-              echo "### migration"
-              echo
-              printf '%s\n' "$migrations"
-            fi
-
-            if [ -n "$notices" ]; then
-              echo
-              echo "### 注意"
-              echo
-              printf '%s' "$notices"
-            fi
-
-            if [ "$relation" != none ] && [ "$relation" != same ]; then
-              echo
-              echo "<details><summary>変更ファイル（$(git diff --shortstat "$prev" "$SHA" | sed 's/^ *//')）</summary>"
-              echo
-              echo '```'
-              git diff --stat=120 "$prev" "$SHA"
-              echo '```'
-              echo
-              echo "</details>"
-            fi
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+        run: go run .
