@@ -17,6 +17,8 @@ ochanuco の repo で共有するもの。repo の設定と ruleset は [chabata
 | `deploy-plan.yml` | `deploy.yml` の前段。前回のデプロイから何が出るかを Job Summary に書き、出す SHA と承認の要否を決める |
 | `release-pr.yml` | `main` → `production` のリリース PR を作る・更新する。Environment の承認が使えない private の repo（chabatake）用 |
 
+この repo 自身の workflow は `ci.yml`（`tools/` の Go の check）と `release.yml`（版のタグと Release、[版](#版)）。
+
 呼び出し側は commit SHA で固定する（`@<sha> # <短い説明>`）。更新は Renovate の PR で受ける。
 
 必須の status check の名前は「呼び出し側のジョブ名 / 呼ばれた側のジョブ名」になる。check は `ci / check` に揃え、chabatake の ruleset はこの名前を必須にする。
@@ -137,6 +139,8 @@ PR の作成者は GitHub App にする。`GITHUB_TOKEN` で作った PR では�
 ## 版
 
 `v<major>.<minor>.<patch>` のタグと GitHub Release で版を出す。入力を消す・必須にするなど呼び出し側の書き換えが要る変更は major、入力を足す変更は minor、それ以外は patch にする。呼び出し側は `@<sha> # v1.2.3` の形で固定し、Renovate が新しい版の PR を出す。
+
+版を出す PR は、本文に `付ける版: v1.2.3` の行を書く（行の先頭から）。merge すると `release.yml` が merge commit にそのタグと Release を作る。Release の本文は PR の `## Summary` の最初の段落と PR の URL（Summary がなければ PR のタイトル）。直前の版から major・minor・patch のどれか 1 つだけ上げた版でなければ止める。行のない PR は版を出さない。
 
 ## Renovate の preset
 
