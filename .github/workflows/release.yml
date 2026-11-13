@@ -1,0 +1,76 @@
+name: release
+
+# main に merge した PR の本文に `付ける版: vX.Y.Z` の行があれば、merge commit にその版のタグと GitHub Release を作る。
+# 版は直前の版から major・minor・patch のどれか 1 つだけ上げたものに限る（README の「版」の節）。行がない PR（Renovate など）は版を出さない
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.pull_request.merged
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BODY: ${{ github.event.pull_request.body }}
+          TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          body="$(printf '%s\n' "$BODY" | tr -d '\r')"
+          version="$(grep -m1 -E '^付ける版: *v[0-9]+\.[0-9]+\.[0-9]+' <<< "$body" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+          if [ -z "$version" ]; then
+            echo "::notice::PR の本文に「付ける版: vX.Y.Z」の行がないので、版を出さない"
+            exit 0
+          fi
+
+          # 再実行で同じ版がすでにあれば何もしない。別のコミットを指していれば止める
+          if existing="$(git rev-parse --verify --quiet "refs/tags/${version}^{commit}")"; then
+            if [ "$existing" = "$MERGE_SHA" ]; then
+              echo "::notice::${version} はすでにこの merge commit にある"
+              exit 0
+            fi
+            echo "::error::${version} はすでに別のコミット ${existing} にある"
+            exit 1
+          fi
+
+          latest="$(git tag --list 'v*' --sort=-v:refname | grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || echo v0.0.0)"
+          IFS=. read -r major minor patch <<< "${latest#v}"
+          case "$version" in
+            "v$((major + 1)).0.0" | "v${major}.$((minor + 1)).0" | "v${major}.${minor}.$((patch + 1))") ;;
+            *)
+              echo "::error::${version} は直前の版 ${latest} から 1 段だけ上げた版ではない"
+              exit 1
+              ;;
+          esac
+
+          # Release の本文は PR の Summary の最初の段落と PR の URL。Summary がなければ PR のタイトル
+          notes="$(awk '
+            /^## Summary[[:space:]]*$/ { f = 1; next }
+            f && (/^#/ || /^```/) { exit }
+            f && NF == 0 { if (n) exit; next }
+            f { print; n = 1 }
+          ' <<< "$body")"
+          [ -z "$notes" ] && notes="$TITLE"
+          gh release create "$version" --target "$MERGE_SHA" --title "$version" --notes "${notes}"$'\n\n'"${PR_URL}"
+          echo "${version} を出した（直前は ${latest}）"
