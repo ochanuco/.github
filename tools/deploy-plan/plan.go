@@ -165,10 +165,13 @@ func statementsAt(ctx context.Context, g git, commit, file string) ([]string, er
 
 var lineComment = regexp.MustCompile(`--[^\n]*`)
 
-// `--` から行末までを除き、`;` で分けて、空白を 1 つの空白に詰める。文字列リテラルの中も区別しない
+// 改行の \r\n と \r を \n にそろえてから、`--` から行末までを除き、`;` で分けて、空白を 1 つの空白に詰める。
+// 文字列リテラルの中も区別しない。\r をそろえないと、\r の後ろの文がコメントとして消えて判定から漏れる
+var newlines = strings.NewReplacer("\r\n", "\n", "\r", "\n")
+
 func splitStatements(text string) []string {
 	var out []string
-	for _, s := range strings.Split(lineComment.ReplaceAllString(text, ""), ";") {
+	for _, s := range strings.Split(lineComment.ReplaceAllString(newlines.Replace(text), ""), ";") {
 		if fields := strings.FieldsFunc(s, isSpace); len(fields) > 0 {
 			out = append(out, strings.Join(fields, " "))
 		}

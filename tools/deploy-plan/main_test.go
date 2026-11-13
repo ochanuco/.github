@@ -515,6 +515,8 @@ func TestSplitStatements(t *testing.T) {
 		{"空", "", nil},
 		{"コメントと空の文を除く", "-- a; b\n;;\n  ;", nil},
 		{"空白を詰める", "CREATE\tTABLE  a\n(\n  id int\n);", []string{"CREATE TABLE a ( id int )"}},
+		{"CRLF", "-- a\r\nCREATE TABLE a (id int);\r\n", []string{"CREATE TABLE a (id int)"}},
+		{"\\r だけの改行でもコメントは行末まで", "-- a\rDROP TABLE a;", []string{"DROP TABLE a"}},
 		{"行の途中のコメント", "CREATE TABLE a (id int); -- DROP TABLE a;\nDROP TABLE b", []string{"CREATE TABLE a (id int)", "DROP TABLE b"}},
 		// 文字列リテラルの中の -- と ; も区別しない
 		{"文字列の中", "INSERT INTO a VALUES ('x;y--z');", []string{"INSERT INTO a VALUES ('x", "y"}},
