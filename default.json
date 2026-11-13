@@ -1,7 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "ochanuco の repo の共通設定。各 repo は extends: [\"github>ochanuco/.github\"] で使う",
-  "extends": [
-    "github>ochanuco/.github:base"
-  ]
+  "description": "ochanuco の repo の共通設定。各 repo は extends: [\"github>ochanuco/.github\"] で使う。自動マージしたくない repo は :base を使う",
+  "extends": ["github>ochanuco/.github:base", "github>ochanuco/.github:automerge"]
 }
