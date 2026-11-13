@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "CI が通った更新を自動マージする。グループの PR は全部の更新が自動マージの対象のときだけマージされるので、人がレビューする更新は別のグループに分ける",
+  "description": "CI が通った更新を自動マージする。グループの PR は含まれる更新がすべて自動マージの対象のときだけマージされるので、人がレビューする更新は別のグループに分ける",
   "automergeType": "pr",
   "platformAutomerge": false,
   "packageRules": [
