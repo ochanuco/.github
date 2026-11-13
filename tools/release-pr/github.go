@@ -84,8 +84,10 @@ func (gh *github) createReleasePR(ctx context.Context, title, body string) (pull
 	return pr, err
 }
 
-func (gh *github) editBody(ctx context.Context, number int, body string) error {
-	return gh.do(ctx, http.MethodPatch, gh.rest(fmt.Sprintf("/pulls/%d", number)), map[string]string{"body": body}, nil)
+func (gh *github) editBody(ctx context.Context, number int, body string) (pullRequest, error) {
+	var pr pullRequest
+	err := gh.do(ctx, http.MethodPatch, gh.rest(fmt.Sprintf("/pulls/%d", number)), map[string]string{"body": body}, &pr)
+	return pr, err
 }
 
 // state（OPEN・MERGED・CLOSED）と mergeStateStatus（BEHIND・UNKNOWN など）。

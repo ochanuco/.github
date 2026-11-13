@@ -140,7 +140,7 @@ func (f *fakeGitHub) start() *httptest.Server {
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/ochanuco/app/pulls/"):
 			f.calls = append(f.calls, "edit #"+strings.TrimPrefix(r.URL.Path, "/repos/ochanuco/app/pulls/"))
 			f.body, _ = in["body"].(string)
-			json.NewEncoder(w).Encode(pullRequest{})
+			json.NewEncoder(w).Encode(pullRequest{HTMLURL: "https://github.com/ochanuco/app/pull/500"})
 		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
 			vars, _ := in["variables"].(map[string]any)
 			if vars["owner"] != "ochanuco" || vars["name"] != "app" {
@@ -222,7 +222,7 @@ func TestRunPR(t *testing.T) {
 			return scenario{cfg: cfg, gh: &fakeGitHub{t: t, open: []pullRequest{{Number: 500}}},
 				calls:  []string{"list", "edit #500"},
 				body:   head(cfg.mainSHA) + "## 含まれる変更\n\n- #12\n\n## Deploy\n\n" + deployNote,
-				stdout: "release/production is 1 commit(s) ahead of production.\nUpdated PR #500\n",
+				stdout: "release/production is 1 commit(s) ahead of production.\nhttps://github.com/ochanuco/app/pull/500\nUpdated PR #500\n",
 				output: "has_changes=true\n"}
 		}},
 		{"前回のリリースが main にない", func(t *testing.T, r *testRepo, cfg config) scenario {

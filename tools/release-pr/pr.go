@@ -57,10 +57,11 @@ func runPR(ctx context.Context, cfg config, d deps) error {
 	}
 	// title は初回作成時の日時のまま維持する（いつから昇格待ちかを表す）。body と diff が常に main 先端を示す
 	if existing != nil {
-		if err := d.gh.editBody(ctx, existing.Number, body); err != nil {
+		pr, err := d.gh.editBody(ctx, existing.Number, body)
+		if err != nil {
 			return err
 		}
-		fmt.Fprintf(d.stdout, "Updated PR #%d\n", existing.Number)
+		fmt.Fprintf(d.stdout, "%s\nUpdated PR #%d\n", pr.HTMLURL, existing.Number)
 		return nil
 	}
 	pr, err := d.gh.createReleasePR(ctx, "🚀リリース "+d.now().In(jst).Format("2006-01-02 15:04:05"), body)
