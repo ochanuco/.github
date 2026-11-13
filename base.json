@@ -1,0 +1,59 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "ochanuco の repo の共通設定（自動マージなし）。自動マージしたくない repo は extends: [\"github>ochanuco/.github:base\"] で使う",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "timezone": "Asia/Tokyo",
+  "schedule": ["before 9am on monday"],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "labels": ["dependencies"],
+  "vulnerabilityAlerts": {
+    "description": "脆弱性の修正は Dependabot alerts を読んで Renovate が出す。スケジュールと公開からの待ち日数を飛ばし、グループにせず 1 件ずつ PR にする",
+    "addLabels": ["security"]
+  },
+  "packageRules": [
+    {
+      "description": "既定はすべて tooling（devDependencies、GitHub Actions、パッケージマネージャー、ツール）。後に書いた runtime のルールが本番で動く依存を上書きする。groupSlug はブランチ名になる。groupName から作らせると括弧が残り、Cloudflare Workers Builds の Preview 名に使えない",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
+      "groupName": "tooling (non-major)",
+      "groupSlug": "tooling-non-major"
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "groupName": "tooling (major)",
+      "groupSlug": "tooling-major"
+    },
+    {
+      "description": "本番で動く依存。tooling と分けてレビューする",
+      "matchDepTypes": ["dependencies", "optionalDependencies", "project.dependencies", "require"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "runtime (non-major)",
+      "groupSlug": "runtime-non-major"
+    },
+    {
+      "matchDepTypes": ["dependencies", "optionalDependencies", "project.dependencies", "require"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "runtime (major)",
+      "groupSlug": "runtime-major"
+    },
+    {
+      "description": "コンテナのベースイメージも本番で動く",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "runtime (non-major)",
+      "groupSlug": "runtime-non-major"
+    },
+    {
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "runtime (major)",
+      "groupSlug": "runtime-major"
+    },
+    {
+      "description": "requires-python は実行環境と CI の Python に合わせて手で上げる",
+      "matchManagers": ["pep621"],
+      "matchDepNames": ["python"],
+      "enabled": false
+    }
+  ]
+}

@@ -140,8 +140,13 @@ PR の作成者は GitHub App にする。`GITHUB_TOKEN` で作った PR では�
 
 | preset | 中身 | 使う repo |
 |---|---|---|
-| `github>ochanuco/.github` | `config:recommended`、action の SHA 固定、月曜朝、公開から 7 日経った版だけ、`dependencies` ラベル。更新は tooling と runtime（本番で動く依存）に分け、それぞれ non-major と major の PR にまとめる | Renovate を使うすべての repo |
-| `github>ochanuco/.github:automerge` | tooling の non-major を CI が通ったら自動マージする。runtime は人がレビューする | `ci / check` が必須になっている repo だけ。check がない repo では検証なしでマージされる |
+| `github>ochanuco/.github:base` | `config:recommended`、action の SHA 固定、月曜朝、公開から 7 日経った版だけ、`dependencies` ラベル。更新は tooling と runtime（本番で動く依存）に分け、それぞれ non-major と major の PR にまとめる。脆弱性の修正は Dependabot alerts から `security` ラベル付きの PR を 1 件ずつすぐ出す。`pep621` の `requires-python` は上げない | 自動マージしたくない repo |
+| `github>ochanuco/.github` | `:base` と同じ | Renovate を使うすべての repo |
+| `github>ochanuco/.github:automerge` | tooling の non-major を CI が通ったら自動マージする。runtime は人がレビューする | CI がある repo |
+
+自動マージは、ブランチの status check がすべて成功するまで待つ。check が 1 つもない repo ではマージされずに PR が残る。`renovate/stability-days` は数えないので、7 日待ちが明けても CI の check が別に要る。
+
+脆弱性の修正 PR を出すには、repo の Dependabot alerts を有効にする（chabatake の `github/` が持つ）。Dependabot security updates は使わない。同じ更新の PR を 2 つの bot が出さないようにするため。
 
 repo 側はコメントを書ける `renovate.json5` にし、`extends` に並べたうえで repo 固有のルール（ファイルごとのまとめ方など）だけを足す。
 
@@ -152,4 +157,4 @@ repo 側はコメントを書ける `renovate.json5` にし、`extends` に並�
 }
 ```
 
-preset 自体（`default.json`、`automerge.json`）は `.json` のままにする。Renovate は `github>ochanuco/.github` の形では `.json` の preset しか探さないため。説明は各ルールの `description` に書く。
+preset 自体（`default.json`、`base.json`、`automerge.json`）は `.json` のままにする。Renovate は `github>ochanuco/.github` の形では `.json` の preset しか探さないため。説明は各ルールの `description` に書く。
