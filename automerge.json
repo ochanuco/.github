@@ -1,22 +1,37 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "tooling の non-major を CI が通ったら自動マージする。ci / check が必須になっている repo だけで使う（check のない repo では検証なしでマージされる）",
+  "description": "CI が通った更新を自動マージする。グループの PR は全部の更新が自動マージの対象のときだけマージされるので、人がレビューする更新は別のグループに分ける",
+  "automergeType": "pr",
+  "platformAutomerge": false,
   "packageRules": [
     {
-      "matchPackageNames": ["*"],
+      "description": "non-major は tooling も runtime も自動マージする",
       "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": false
+      "automerge": true
     },
     {
-      "description": "本番で動く依存は人がレビューする",
+      "description": "本番で動く依存の 0.x の minor は破壊的変更を含みうるので人がレビューする",
       "matchDepTypes": ["dependencies", "optionalDependencies", "project.dependencies", "require"],
-      "automerge": false
+      "matchCurrentVersion": "<1.0.0",
+      "matchUpdateTypes": ["minor"],
+      "automerge": false,
+      "groupName": "runtime (0.x minor)",
+      "groupSlug": "runtime-0x-minor"
     },
     {
-      "matchManagers": ["dockerfile", "docker-compose"],
-      "automerge": false
+      "description": "GitHub Actions とツールの major は CI が通れば壊れにくいので自動マージする",
+      "matchManagers": ["github-actions", "mise"],
+      "matchUpdateTypes": ["major"],
+      "automerge": true,
+      "groupName": "tooling (major, automerge)",
+      "groupSlug": "tooling-major-automerge"
+    },
+    {
+      "matchPackageNames": ["@types/**"],
+      "matchUpdateTypes": ["major"],
+      "automerge": true,
+      "groupName": "tooling (major, automerge)",
+      "groupSlug": "tooling-major-automerge"
     }
   ]
 }

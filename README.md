@@ -140,9 +140,20 @@ PR の作成者は GitHub App にする。`GITHUB_TOKEN` で作った PR では�
 
 | preset | 中身 | 使う repo |
 |---|---|---|
-| `github>ochanuco/.github:base` | `config:recommended`、action の SHA 固定、月曜朝、公開から 7 日経った版だけ、`dependencies` ラベル。更新は tooling と runtime（本番で動く依存）に分け、それぞれ non-major と major の PR にまとめる。脆弱性の修正は Dependabot alerts から `security` ラベル付きの PR を 1 件ずつすぐ出す。`pep621` の `requires-python` は上げない | 自動マージしたくない repo |
-| `github>ochanuco/.github` | `:base` と同じ | Renovate を使うすべての repo |
-| `github>ochanuco/.github:automerge` | tooling の non-major を CI が通ったら自動マージする。runtime は人がレビューする | CI がある repo |
+| `github>ochanuco/.github` | `:base` と `:automerge` | Renovate を使うすべての repo |
+| `github>ochanuco/.github:base` | `config:recommended`、action の SHA 固定、月曜朝、公開から 7 日経った版だけ、`dependencies` ラベル。更新は tooling と runtime（本番で動く依存）に分け、それぞれ non-major と major の PR にまとめる。脆弱性の修正は Dependabot alerts から `security` ラベル付きの PR を 1 件ずつすぐ出す。`pep621` の `requires-python` は上げない | 自動マージしたくない repo は、`github>ochanuco/.github` の代わりにこれを使う |
+| `github>ochanuco/.github:automerge` | CI が通ったら自動マージする。対象は non-major（tooling と runtime）、GitHub Actions・mise のツール・`@types/*` の major、それらに当たる `security` の PR。人がレビューするのは runtime の 0.x の minor とそれ以外の major | 単体では使わない |
+
+グループの PR は、含まれる更新がすべて自動マージの対象のときだけマージされる。そのため `:automerge` は、人がレビューする更新を別のグループに分ける。
+
+| グループ | 自動マージ |
+|---|---|
+| `tooling (non-major)` | する |
+| `tooling (major, automerge)` | する |
+| `tooling (major)` | しない |
+| `runtime (non-major)` | する |
+| `runtime (0.x minor)` | しない |
+| `runtime (major)` | しない |
 
 自動マージは、ブランチの status check がすべて成功するまで待つ。check が 1 つもない repo ではマージされずに PR が残る。`renovate/stability-days` は数えないので、7 日待ちが明けても CI の check が別に要る。
 
@@ -153,7 +164,7 @@ repo 側はコメントを書ける `renovate.json5` にし、`extends` に並�
 ```json5
 {
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
-  extends: ['github>ochanuco/.github', 'github>ochanuco/.github:automerge'],
+  extends: ['github>ochanuco/.github'],
 }
 ```
 
