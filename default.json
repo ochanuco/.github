@@ -1,49 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "ochanuco の repo の共通設定。各 repo は extends: [\"github>ochanuco/.github\"] で使う",
-  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
-  "timezone": "Asia/Tokyo",
-  "schedule": ["before 9am on monday"],
-  "minimumReleaseAge": "7 days",
-  "internalChecksFilter": "strict",
-  "labels": ["dependencies"],
-  "packageRules": [
-    {
-      "description": "既定はすべて tooling（devDependencies、GitHub Actions、パッケージマネージャー、ツール）。後に書いた runtime のルールが本番で動く依存を上書きする。groupSlug はブランチ名になる。groupName から作らせると括弧が残り、Cloudflare Workers Builds の Preview 名に使えない",
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
-      "groupName": "tooling (non-major)",
-      "groupSlug": "tooling-non-major"
-    },
-    {
-      "matchUpdateTypes": ["major"],
-      "groupName": "tooling (major)",
-      "groupSlug": "tooling-major"
-    },
-    {
-      "description": "本番で動く依存。tooling と分けてレビューする",
-      "matchDepTypes": ["dependencies", "optionalDependencies", "project.dependencies", "require"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
-      "groupName": "runtime (non-major)",
-      "groupSlug": "runtime-non-major"
-    },
-    {
-      "matchDepTypes": ["dependencies", "optionalDependencies", "project.dependencies", "require"],
-      "matchUpdateTypes": ["major"],
-      "groupName": "runtime (major)",
-      "groupSlug": "runtime-major"
-    },
-    {
-      "description": "コンテナのベースイメージも本番で動く",
-      "matchManagers": ["dockerfile", "docker-compose"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
-      "groupName": "runtime (non-major)",
-      "groupSlug": "runtime-non-major"
-    },
-    {
-      "matchManagers": ["dockerfile", "docker-compose"],
-      "matchUpdateTypes": ["major"],
-      "groupName": "runtime (major)",
-      "groupSlug": "runtime-major"
-    }
+  "extends": [
+    "github>ochanuco/.github:base"
   ]
 }
