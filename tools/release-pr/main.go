@@ -94,7 +94,7 @@ func loadConfig(cmd string, getenv func(string) string) (config, error) {
 	case "pr":
 		cfg.repoDir = need("REPO_DIR")
 		cfg.mainSHA = need("MAIN_SHA")
-		cfg.deployNote = need("DEPLOY_NOTE")
+		cfg.deployNote = getenv("DEPLOY_NOTE")
 		cfg.checklist = getenv("CHECKLIST")
 		cfg.bodyCommand = getenv("BODY_COMMAND")
 		cfg.outputPath = getenv("GITHUB_OUTPUT")

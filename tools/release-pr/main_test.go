@@ -390,7 +390,7 @@ func TestLoadConfig(t *testing.T) {
 		t.Error(err)
 	}
 	if _, err := loadConfig("pr", func(k string) string { return map[string]string{"GH_TOKEN": "t", "REPO": "ochanuco/app"}[k] }); err == nil ||
-		!strings.Contains(err.Error(), "REPO_DIR, MAIN_SHA, DEPLOY_NOTE") {
+		!strings.Contains(err.Error(), "REPO_DIR, MAIN_SHA") {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := loadConfig("deploy", func(string) string { return "x" }); err == nil {
