@@ -50,6 +50,16 @@
       "groupSlug": "runtime-major"
     },
     {
+      "description": "ochanuco/.github の workflow と action は自分で出す版なので、曜日も公開からの日数も待たずに PR にする。major は呼び出し側の書き換えが要るので、ほかの action の major と同じ扱いのままにする",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["ochanuco/.github", "ochanuco/.github/**"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
+      "groupName": "ochanuco/.github",
+      "groupSlug": "ochanuco-github",
+      "schedule": ["at any time"],
+      "minimumReleaseAge": null
+    },
+    {
       "description": "requires-python は実行環境と CI の Python に合わせて手で上げる",
       "matchManagers": ["pep621"],
       "matchDepNames": ["python"],
