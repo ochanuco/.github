@@ -1,0 +1,56 @@
+name: chabatake dispatch
+description: Dispatch a workflow on ochanuco/chabatake's production branch and wait for its result.
+
+inputs:
+  workflow:
+    description: workflow file in chabatake (docker01-app.yml, gpu-box-app.yml)
+    required: true
+  inputs:
+    description: the workflow's inputs as a JSON object of strings. Empty values are left out and request_id is added.
+    default: "{}"
+  title:
+    description: what the Job Summary and the error line call this dispatch
+    required: true
+  op-service-account-token:
+    description: 1Password service account that reads gh-deploy/gpu-box-dispatch
+    required: true
+  wait-minutes:
+    description: how long to wait for the chabatake run, queueing included
+    default: "30"
+  poll-seconds:
+    description: seconds between two reads of the run's state
+    default: "15"
+  cancelled-message:
+    description: result text for a run that was cancelled with no failed job
+    default: cancelled
+
+runs:
+  using: composite
+  steps:
+    - id: app
+      uses: 1password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.op-service-account-token }}
+        CLIENT_ID: op://gh-deploy/gpu-box-dispatch/github_app_client_id
+        PRIVATE_KEY: op://gh-deploy/gpu-box-dispatch/github_app_private_key
+
+    - id: token
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      with:
+        client-id: ${{ steps.app.outputs.CLIENT_ID }}
+        private-key: ${{ steps.app.outputs.PRIVATE_KEY }}
+        owner: ochanuco
+        repositories: chabatake
+        permission-actions: write
+
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ steps.token.outputs.token }}
+        WORKFLOW: ${{ inputs.workflow }}
+        INPUTS: ${{ inputs.inputs }}
+        TITLE: ${{ inputs.title }}
+        WAIT_MINUTES: ${{ inputs.wait-minutes }}
+        POLL_SECONDS: ${{ inputs.poll-seconds }}
+        CANCELLED_MESSAGE: ${{ inputs.cancelled-message }}
+        REQUEST_ID: ${{ github.repository }}#${{ github.run_id }}
+      run: bash "$GITHUB_ACTION_PATH/dispatch.sh"

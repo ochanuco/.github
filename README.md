@@ -144,6 +144,31 @@ PR を作った後、`mergeStateStatus` が `BEHIND` なら失敗させる。`BE
 
 判定と本文の整形は `tools/release-pr`（Go、標準ライブラリだけ）が持ち、`deploy-plan` と同じく `job.workflow_sha` で checkout したツールを `go run` する。`setup-go` が job に足す `GOTOOLCHAIN=local` は `body-command` には渡さないので、`body-command` の中の `go` は呼び出し側の `go.mod` の版を使える。ツールのテストは `deploy-plan` と同じ `ci / check` が動かす。
 
+## composite action
+
+| action | 用途 |
+|---|---|
+| `actions/chabatake-dispatch` | chabatake の `production` ブランチの workflow（`docker01-app.yml`、`gpu-box-app.yml`）を dispatch し、その run の結果を待つ |
+
+reusable workflow と同じく、呼び出し側は commit SHA で固定する。
+
+### chabatake への dispatch
+
+```yaml
+- uses: ochanuco/.github/actions/chabatake-dispatch@<sha> # v1.7.0
+  with:
+    workflow: docker01-app.yml
+    inputs: '{"service": "chatsumi", "tag": "${{ needs.publish.outputs.tag }}"}'
+    title: 'docker01-app: chatsumi ${{ needs.publish.outputs.tag }}'
+    op-service-account-token: ${{ secrets.OP_SA_DEPLOY }}
+```
+
+`inputs` は dispatch 先の workflow の入力を文字列の JSON object で渡す。値が空の入力は送らない。`request_id`（`<呼び出し側の repo>#<run の ID>`）は action が足すので、dispatch 先の workflow は `request_id` を受けて run 名に入れる。run の ID が dispatch の応答で返らなかったときに、この値で run を探す。
+
+dispatch に使う GitHub App の鍵は、`op-service-account-token` の service account で 1Password の `gh-deploy/gpu-box-dispatch` から読む。
+
+run が成功したときだけ成功し、結果は Job Summary に `title` の見出しで書く。待つ長さは `wait-minutes`（既定 30、キュー待ちを含む）、状態を読む間隔は `poll-seconds`（既定 15）。失敗した job がないまま cancel された run の結果の文言は `cancelled-message` で変えられる。
+
 ## 版
 
 `v<major>.<minor>.<patch>` のタグと GitHub Release で版を出す。入力を消す・必須にするなど呼び出し側の書き換えが要る変更は major、入力を足す変更は minor、それ以外は patch にする。呼び出し側は `@<sha> # v1.2.3` の形で固定し、Renovate が新しい版の PR を出す。
@@ -155,7 +180,7 @@ PR を作った後、`mergeStateStatus` が `BEHIND` なら失敗させる。`BE
 | preset | 中身 | 使う repo |
 |---|---|---|
 | `github>ochanuco/.github` | `:base` と `:automerge` | Renovate を使うすべての repo |
-| `github>ochanuco/.github:base` | `config:recommended`、action の SHA 固定、月曜朝、公開から 7 日経った版だけ、`dependencies` ラベル。更新は tooling と runtime（本番で動く依存）に分け、それぞれ non-major と major の PR にまとめる。脆弱性の修正は Dependabot alerts から `security` ラベル付きの PR を 1 件ずつすぐ出す。`pep621` の `requires-python` は上げない | 自動マージしたくない repo は、`github>ochanuco/.github` の代わりにこれを使う |
+| `github>ochanuco/.github:base` | `config:recommended`、action の SHA 固定、月曜朝、公開から 7 日経った版だけ、`dependencies` ラベル。更新は tooling と runtime（本番で動く依存）に分け、それぞれ non-major と major の PR にまとめる。脆弱性の修正は Dependabot alerts から `security` ラベル付きの PR を 1 件ずつすぐ出す。`pep621` の `requires-python` は上げない。`ochanuco/.github` の non-major だけは、曜日も 7 日も待たずに単独の PR（`ochanuco/.github`）にする | 自動マージしたくない repo は、`github>ochanuco/.github` の代わりにこれを使う |
 | `github>ochanuco/.github:automerge` | CI が通ったら自動マージする。対象は non-major（tooling と runtime）、GitHub Actions・mise のツール・`@types/*` の major、それらに当たる `security` の PR。人がレビューするのは runtime の 0.x の minor とそれ以外の major | 単体では使わない |
 
 グループの PR は、含まれる更新がすべて自動マージの対象のときだけマージされる。そのため `:automerge` は、人がレビューする更新を別のグループに分ける。
@@ -163,6 +188,7 @@ PR を作った後、`mergeStateStatus` が `BEHIND` なら失敗させる。`BE
 | グループ | 自動マージ |
 |---|---|
 | `tooling (non-major)` | する |
+| `ochanuco/.github` | する |
 | `tooling (major, automerge)` | する |
 | `tooling (major)` | しない |
 | `runtime (non-major)` | する |
